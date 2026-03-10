@@ -7,8 +7,6 @@ type Gaze = {
     x: number;
     y: number;
     hasFace: boolean;
-    leftIris: Point[];
-    rightIris: Point[];
 };
 
 const LEFT_IRIS = [468, 469, 470, 471, 472];
@@ -25,7 +23,7 @@ function avg(points: Point[]): Point {
 }
 
 export function useIrisGaze(video: HTMLVideoElement | null) {
-    const [gaze, setGaze] = useState<Gaze>({ x: 0.5, y: 0.5, hasFace: false, leftIris: [], rightIris: [] });
+    const gaze = useRef<Gaze>({ x: 0.5, y: 0.5, hasFace: false });
 
     // holds landmarker instance across renders
     const landmarkerRef = useRef<any>(null);
@@ -87,7 +85,7 @@ export function useIrisGaze(video: HTMLVideoElement | null) {
                 const result = lm.detectForVideo(video, nowMs);
 
                 if (!result?.faceLandmarks?.length){
-                    setGaze((g) => ({ ...g, hasFace: false }));
+                    gaze.current = { ...gaze.current, hasFace: false };
                     rafId = requestAnimationFrame(loop);
                     return;
                 }
@@ -102,7 +100,7 @@ export function useIrisGaze(video: HTMLVideoElement | null) {
 
                 // raw pupil proxy (average of both iris centers)
                 const raw: Point = { x: (left_avg.x + right_avg.x) / 2, y: (left_avg.y + right_avg.y) / 2 };
-                console.log(raw);
+                //console.log(raw);
 
                 // moving average smoothing
                 const q = smoothQueueRef.current;
@@ -110,7 +108,8 @@ export function useIrisGaze(video: HTMLVideoElement | null) {
                 if (q.length > SMOOTH_N) q.shift();
                 const sm = avg(q);
 
-                setGaze({ x: sm.x, y: sm.y, hasFace: true, leftIris: left, rightIris: right });
+                gaze.current = { x: sm.x, y: sm.y, hasFace: true};
+                console.log(gaze.current);
 
                 rafId = requestAnimationFrame(loop);
             };
@@ -131,5 +130,5 @@ export function useIrisGaze(video: HTMLVideoElement | null) {
         };
     }, [video]);
 
-    return gaze;
+    return gaze.current;
 }

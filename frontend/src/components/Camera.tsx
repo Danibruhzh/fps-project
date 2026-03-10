@@ -1,56 +1,66 @@
 import Webcam from "react-webcam";
 import { useRef, useEffect, useState } from "react";
-import { useIrisGaze } from "./useIrisGaze";
+import { FaceLandmarker, FilesetResolver, DrawingUtils } from "@mediapipe/tasks-vision";
 import "./Camera.css"
 
-type Point = { x: number; y: number };
+type Point = {
+    x: number;
+    y: number
+};
+type Gaze = {
+    x: number;
+    y: number;
+    hasFace: boolean;
+};
 const camWidth = 250;
 const camHeight = 180;
 const windowWidth = 1535;
 const windowHeight = 728;
+
+const LEFT_IRIS = [468, 469, 470, 471, 472];
+const RIGHT_IRIS = [473, 474, 475, 476, 477];
 // const widthRatio = camWidth / windowWidth;
 // const heightRatio = camHeight / windowHeight;
 
-function toPixel(p: Point, w: number, h: number) {
-    return { x: p.x * w, y: p.y * h };
-}
+// function toPixel(p: Point, w: number, h: number) {
+//     return { x: p.x * w, y: p.y * h };
+// }
 
-function drawRing(ctx: CanvasRenderingContext2D, points: Point[]) {
-    if (points.length < 2) return;
+// function drawRing(ctx: CanvasRenderingContext2D, points: Point[]) {
+//     if (points.length < 2) return;
 
-    const w = ctx.canvas.width;
-    const h = ctx.canvas.height;
+//     const w = ctx.canvas.width;
+//     const h = ctx.canvas.height;
 
-    const p0 = toPixel(points[0], w, h);
-    ctx.beginPath();
-    ctx.moveTo(p0.x, p0.y);
+//     const p0 = toPixel(points[0], w, h);
+//     ctx.beginPath();
+//     ctx.moveTo(p0.x, p0.y);
 
-    for (let i = 1; i < points.length; i++) {
-        const p = toPixel(points[i], w, h);
-        ctx.lineTo(p.x, p.y);
-    }
+//     for (let i = 1; i < points.length; i++) {
+//         const p = toPixel(points[i], w, h);
+//         ctx.lineTo(p.x, p.y);
+//     }
 
-    ctx.closePath();
-    ctx.lineWidth = 2;
-    ctx.stroke();
+//     ctx.closePath();
+//     ctx.lineWidth = 2;
+//     ctx.stroke();
 
-    console.log(p0);
-}
+//     console.log(p0);
+// }
 
-function drawIrisDot(ctx: CanvasRenderingContext2D, nx: number, ny: number) {
-    const x = nx * ctx.canvas.width;
-    const y = ny * ctx.canvas.height;
+// function drawIrisDot(ctx: CanvasRenderingContext2D, nx: number, ny: number) {
+//     const x = nx * ctx.canvas.width;
+//     const y = ny * ctx.canvas.height;
 
-    ctx.beginPath();
-    ctx.arc(x, y, 4, 0, Math.PI * 2);
-    ctx.fill();
-}
+//     ctx.beginPath();
+//     ctx.arc(x, y, 4, 0, Math.PI * 2);
+//     ctx.fill();
+// }
 
 function drawDot(ctx: CanvasRenderingContext2D, nx: number, ny: number) {
     // converts normalized points into pixels
     const x = nx * windowWidth;
     const y = ny * windowHeight;
-    console.log(x, y);
 
     ctx.clearRect(0, 0, windowWidth, windowHeight);
     ctx.beginPath();
@@ -58,62 +68,222 @@ function drawDot(ctx: CanvasRenderingContext2D, nx: number, ny: number) {
     ctx.fill();
 }
 
+function avg(points: Point[]): Point {
+    let sx = 0;
+    let sy = 0;
+    for (const p of points) {
+        sx += p.x;
+        sy += p.y;
+    }
+    return { x: sx / points.length, y: sy / points.length };
+}
+
 function Camera() {
     const webcamRef = useRef<Webcam>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
+    const lipsRef = useRef<HTMLCanvasElement>(null);
     const overlayRef = useRef<HTMLCanvasElement>(null);
-    // video element stored in state so updates trigger rerender
-    const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null);
-    const gaze = useIrisGaze(videoEl);
-    console.log(gaze);
 
-    const handleUserMedia = () => {
-        const v = webcamRef.current?.video ?? null;
-        if (v) {
-            if (v.readyState >= 1) { // when video metadata is ready
-                setVideoEl(v);
-            } else {
-                v.onloadeddata = () => setVideoEl(v); // calls once video metadata finishes loading
-            }
-        }
-    }
+    // video element stored in state so updates trigger rerender
+    const facelandmarkerRef = useRef<FaceLandmarker | null>(null);
+    const rafIdRef = useRef<number>(0);
+    const lastVideoTimeRef = useRef<number>(-1);
+
+    const gaze = useRef<Gaze>({ x: 0.5, y: 0.5, hasFace: false });
+
+    // smoothQueueRef stores the recent gaze points for moving-average smoothing
+    const smoothQueueRef = useRef<Point[]>([]);
+
+    // Smoothing amount:
+    // 1 = fastest but jittery
+    // 3 = good balance
+    // 5 = smoother but more lag
+    const SMOOTH_N = 1;
 
     useEffect(() => {
-        const canvas = canvasRef.current;
-        const overlay = overlayRef.current;
-        if (!canvas) return;
-        if (!overlay) return;
+        let cancelled = false;
 
+        async function init() {
+            const filesetResolver = await FilesetResolver.forVisionTasks(
+                "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.32/wasm"
+            );
+
+            const landmarker = await FaceLandmarker.createFromOptions(filesetResolver, {
+                baseOptions: {
+                    modelAssetPath:
+                        "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+                    delegate: "GPU",
+                },
+                runningMode: "VIDEO",
+                numFaces: 1,
+                outputFaceBlendshapes: false,
+                outputFacialTransformationMatrixes: false,
+            });
+
+            if (cancelled) {
+                if (landmarker?.close) landmarker.close();
+                return;
+            }
+
+            facelandmarkerRef.current = landmarker;
+            //setReady(true);
+        }
+        init();
+
+        return () => {
+            cancelled = true;
+            if (rafIdRef.current) {
+                cancelAnimationFrame(rafIdRef.current);
+            }
+            facelandmarkerRef.current?.close();
+            facelandmarkerRef.current = null;
+        }
+    }, []);
+
+    const startPredictLoop = () => {
+        const video = webcamRef.current?.video ?? null;
+        const overlay = overlayRef.current;
+        const landmarker = facelandmarkerRef.current;
+        const canvas = canvasRef.current;
+        const lips = lipsRef.current;
+        if (!video || !overlay || !landmarker || !canvas || !lips) return;
+
+        overlay.width = camWidth;
+        overlay.height = camHeight;
         canvas.width = windowWidth;
         canvas.height = windowHeight;
-        overlay.width = camWidth;
-        overlay.height = camWidth;
+        lips.width = windowWidth;
+        lips.height = windowHeight;
 
-        const ctx = canvas.getContext("2d");
-        const ctx2 = overlay.getContext("2d");
+        const overlayCtx = overlay.getContext("2d");
+        const pageCtx = canvas.getContext("2d");
+        const lipsCtx = lips.getContext("2d");
+        if (!overlayCtx || !pageCtx || !lipsCtx) return;
 
-        if (!ctx) return;
-        if (!ctx2) return;
+        const drawingUtils = new DrawingUtils(overlayCtx);
 
-        ctx2.clearRect(0, 0, camWidth, camHeight);
+        const predictWebcam = () => {
+            const v = webcamRef.current?.video ?? null;
+            const lm = facelandmarkerRef.current;
 
-        if (!gaze.hasFace) {
-            ctx.clearRect(0, 0, windowWidth, windowHeight);
-            return;
-        }
+            if (!v || !lm) return;
 
-        if (gaze.leftIris) {
-            drawRing(ctx2, gaze.leftIris);
-        }
-        if (gaze.rightIris) {
-            drawRing(ctx2, gaze.rightIris);
-        }
+            if (v?.currentTime !== lastVideoTimeRef.current) {
+                lastVideoTimeRef.current = v.currentTime;
 
-        drawDot(ctx, gaze.x, gaze.y);
-        drawIrisDot(ctx2, gaze.x, gaze.y);
-    }, [gaze]);
+                const nowMs = performance.now();
+                const results = lm.detectForVideo(v, nowMs);
 
-    // This is for the mouse stuff. I don't need this.
+                overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+
+                if (!results.faceLandmarks?.length) {
+                    gaze.current = { ...gaze.current, hasFace: false };
+                    pageCtx.clearRect(0, 0, canvas.width, canvas.height);
+                    lipsCtx.clearRect(0, 0, lips.width, lips.height);
+                } else {
+                    const landmarks = results.faceLandmarks[0];
+
+                    drawingUtils.drawConnectors(
+                        landmarks,
+                        FaceLandmarker.FACE_LANDMARKS_LEFT_EYE,
+                        { color: "blue", lineWidth: 1 }
+                    );
+                    drawingUtils.drawConnectors(
+                        landmarks,
+                        FaceLandmarker.FACE_LANDMARKS_RIGHT_EYE,
+                        { color: "blue", lineWidth: 1 }
+                    );
+                    drawingUtils.drawConnectors(
+                        landmarks,
+                        FaceLandmarker.FACE_LANDMARKS_LEFT_IRIS,
+                        { color: "blue", lineWidth: 1 }
+                    );
+                    drawingUtils.drawConnectors(
+                        landmarks,
+                        FaceLandmarker.FACE_LANDMARKS_RIGHT_IRIS,
+                        { color: "blue", lineWidth: 1 }
+                    );
+                    drawingUtils.drawConnectors(
+                        landmarks,
+                        FaceLandmarker.FACE_LANDMARKS_LIPS,
+                        { color: "green", lineWidth: 1 }
+                    );
+                    drawingUtils.drawConnectors(
+                        landmarks,
+                        FaceLandmarker.FACE_LANDMARKS_FACE_OVAL,
+                        { color: "red", lineWidth: 1 }
+                    );
+
+                    // Extract the 5 iris points from each eye
+                    const leftPoints: Point[] = LEFT_IRIS.map((i) => ({
+                        x: landmarks[i].x,
+                        y: landmarks[i].y,
+                    }));
+
+                    const rightPoints: Point[] = RIGHT_IRIS.map((i) => ({
+                        x: landmarks[i].x,
+                        y: landmarks[i].y,
+                    }));
+
+                    // Average each iris ring to get one center per eye
+                    const leftCenter = avg(leftPoints);
+                    const rightCenter = avg(rightPoints);
+
+                    // Raw gaze proxy:
+                    // average the two iris centers into one normalized point
+                    const raw: Point = {
+                        x: (leftCenter.x + rightCenter.x) / 2,
+                        y: (leftCenter.y + rightCenter.y) / 2,
+                    };
+
+                    // Moving average smoothing
+                    const q = smoothQueueRef.current;
+                    q.push(raw);
+                    if (q.length > SMOOTH_N) q.shift();
+
+                    const smoothed = avg(q);
+
+                    gaze.current = {
+                        x: smoothed.x,
+                        y: smoothed.y,
+                        hasFace: true,
+                    };
+
+                    drawDot(pageCtx, gaze.current.x, gaze.current.y);
+
+                }
+
+            }
+
+            rafIdRef.current = requestAnimationFrame(predictWebcam);
+        };
+
+        rafIdRef.current = requestAnimationFrame(predictWebcam);
+
+    }
+
+
+
+    // useEffect(() => {
+    //     const canvas = canvasRef.current;
+    //     if (!canvas) return;
+
+    //     canvas.width = windowWidth;
+    //     canvas.height = windowHeight;
+
+    //     const ctx = canvas.getContext("2d");
+
+    //     if (!ctx) return;
+
+    //     if (!gaze.hasFace) {
+    //         ctx.clearRect(0, 0, windowWidth, windowHeight);
+    //         return;
+    //     }
+
+    //     drawDot(ctx, gaze.x, gaze.y);
+    // }, [gaze]);
+
+    // This is for the mouse stuff. I don't need this. *********************************
     // useEffect(() => {
     //     const handleMouseMove = (event: MouseEvent) => {
     //         // Update the ref with current cursor position
@@ -133,6 +303,8 @@ function Camera() {
     //     };
     // }, []);
 
+
+    // ******************************* WEBSOCKET *****************************
     // useEffect(() => {
     //     const ws = new WebSocket("ws://localhost:8000/ws/track");
 
@@ -189,12 +361,27 @@ function Camera() {
     return (
         <div>
             <div className="camera-container">
-                <Webcam className="webcam" ref={webcamRef} audio={false} mirrored onUserMedia={handleUserMedia}
+                <Webcam className="webcam" ref={webcamRef} audio={false} mirrored
+                    onUserMedia={() => {
+                        const v = webcamRef.current?.video ?? null;
+                        if (!v) return;
+
+                        if (v.readyState >= 1) {
+                            startPredictLoop();
+                            console.log("HI");
+                        } else {
+                            v.onloadedmetadata = () => {
+                                startPredictLoop();
+                                console.log("BYE");
+                            }
+                        }
+                    }}
                     videoConstraints={{ width: camWidth, height: camHeight, facingMode: "user", }} />
                 <canvas className="overlay" ref={overlayRef} />
             </div>
             <canvas className="page" ref={canvasRef} />
-            <div> gaze: {gaze.x.toFixed(3)} {gaze.y.toFixed(3)} face: {String(gaze.hasFace)} </div>
+            <canvas className="page" ref={lipsRef} />
+            <div> gaze: {gaze.current.x.toFixed(3)} {gaze.current.y.toFixed(3)} face: {String(gaze.current.hasFace)} </div>
         </div>);
 }
 
