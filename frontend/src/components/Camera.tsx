@@ -22,41 +22,6 @@ const RIGHT_IRIS = [473, 474, 475, 476, 477];
 // const widthRatio = camWidth / windowWidth;
 // const heightRatio = camHeight / windowHeight;
 
-// function toPixel(p: Point, w: number, h: number) {
-//     return { x: p.x * w, y: p.y * h };
-// }
-
-// function drawRing(ctx: CanvasRenderingContext2D, points: Point[]) {
-//     if (points.length < 2) return;
-
-//     const w = ctx.canvas.width;
-//     const h = ctx.canvas.height;
-
-//     const p0 = toPixel(points[0], w, h);
-//     ctx.beginPath();
-//     ctx.moveTo(p0.x, p0.y);
-
-//     for (let i = 1; i < points.length; i++) {
-//         const p = toPixel(points[i], w, h);
-//         ctx.lineTo(p.x, p.y);
-//     }
-
-//     ctx.closePath();
-//     ctx.lineWidth = 2;
-//     ctx.stroke();
-
-//     console.log(p0);
-// }
-
-// function drawIrisDot(ctx: CanvasRenderingContext2D, nx: number, ny: number) {
-//     const x = nx * ctx.canvas.width;
-//     const y = ny * ctx.canvas.height;
-
-//     ctx.beginPath();
-//     ctx.arc(x, y, 4, 0, Math.PI * 2);
-//     ctx.fill();
-// }
-
 function drawDot(ctx: CanvasRenderingContext2D, nx: number, ny: number) {
     // converts normalized points into pixels
     const x = nx * windowWidth;
@@ -76,6 +41,13 @@ function avg(points: Point[]): Point {
         sy += p.y;
     }
     return { x: sx / points.length, y: sy / points.length };
+}
+
+const [caliButton, setCaliButton] = useState<boolean>(true);
+
+export function Calibrate(){
+    const calibrate = caliButton;
+    return calibrate;
 }
 
 function Camera() {
@@ -360,28 +332,36 @@ function Camera() {
 
     return (
         <div>
-            <div className="camera-container">
-                <Webcam className="webcam" ref={webcamRef} audio={false} mirrored
-                    onUserMedia={() => {
-                        const v = webcamRef.current?.video ?? null;
-                        if (!v) return;
+            <div>
+                {caliButton &&
+                    <div>
+                        <div className="camera-container">
+                            <Webcam className="webcam" ref={webcamRef} audio={false} mirrored
+                                onUserMedia={() => {
+                                    const v = webcamRef.current?.video ?? null;
+                                    if (!v) return;
 
-                        if (v.readyState >= 1) {
-                            startPredictLoop();
-                            console.log("HI");
-                        } else {
-                            v.onloadedmetadata = () => {
-                                startPredictLoop();
-                                console.log("BYE");
-                            }
-                        }
-                    }}
-                    videoConstraints={{ width: camWidth, height: camHeight, facingMode: "user", }} />
-                <canvas className="overlay" ref={overlayRef} />
+                                    if (v.readyState >= 1) {
+                                        startPredictLoop();
+                                        console.log("HI");
+                                    } else {
+                                        v.onloadedmetadata = () => {
+                                            startPredictLoop();
+                                            console.log("BYE");
+                                        }
+                                    }
+                                }}
+                                videoConstraints={{ width: camWidth, height: camHeight, facingMode: "user", }} />
+                            <canvas className="overlay" ref={overlayRef} />
+                        </div>
+                        <canvas className="page" ref={canvasRef} />
+                        <canvas className="page" ref={lipsRef} />
+                        <div> gaze: {gaze.current.x.toFixed(3)} {gaze.current.y.toFixed(3)} face: {String(gaze.current.hasFace)} </div>
+                    </div>
+                }
             </div>
-            <canvas className="page" ref={canvasRef} />
-            <canvas className="page" ref={lipsRef} />
-            <div> gaze: {gaze.current.x.toFixed(3)} {gaze.current.y.toFixed(3)} face: {String(gaze.current.hasFace)} </div>
+
+            <div className={caliButton ? "calibrateShow" : "calibrateHide"} onClick={() => { setCaliButton(false) }}>Calibrate</div>
         </div>);
 }
 
