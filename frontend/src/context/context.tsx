@@ -1,28 +1,26 @@
-import { createContext, useContext, useState } from "react";
+import { createContext, useState, useContext } from "react";
 
 type CalibrationContextType = {
-    caliButton: boolean;
-    setCaliButton: React.Dispatch<React.SetStateAction<boolean>>;
+  caliButton: boolean;
+  setCaliButton: React.Dispatch<React.SetStateAction<boolean>>;
+};
+
+type CalibrationProviderProps = {
+  children: React.ReactNode;
 };
 
 const CalibrationContext = createContext<CalibrationContextType | undefined>(undefined);
 
-export function CalibrationProvider({ children }: { children: React.ReactNode }) {
-    const [caliButton, setCaliButton] = useState<boolean>(true);
+export const CalibrationProvider = ({ children }: CalibrationProviderProps) => {
+  const [caliButton, setCaliButton] = useState(false);
 
-    return (
-        <CalibrationContext.Provider value={{ caliButton, setCaliButton }}>
-            {children}
-        </CalibrationContext.Provider>
-    );
-}
+  return (
+    <CalibrationContext.Provider value={{ caliButton, setCaliButton }}>
+      {children}
+    </CalibrationContext.Provider>
+  );
+};
 
-export function useCalibration() {
-    const context = useContext(CalibrationContext);
-
-    if (!context) {
-        throw new Error("useCalibration must be used inside a CalibrationProvider");
-    }
-
-    return context;
-}
+export const useCalibrationContext = () => {
+  return useContext(CalibrationContext);
+};

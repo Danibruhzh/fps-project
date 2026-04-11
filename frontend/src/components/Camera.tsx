@@ -1,6 +1,8 @@
 import Webcam from "react-webcam";
-import { useRef, useEffect, useState } from "react";
+import { useRef, useEffect } from "react";
 import { FaceLandmarker, FilesetResolver, DrawingUtils } from "@mediapipe/tasks-vision";
+import { useCalibrationContext } from "../context/context";
+import Calibration from "./Calibration";
 import "./Camera.css"
 
 type Point = {
@@ -43,14 +45,9 @@ function avg(points: Point[]): Point {
     return { x: sx / points.length, y: sy / points.length };
 }
 
-const [caliButton, setCaliButton] = useState<boolean>(true);
-
-export function Calibrate(){
-    const calibrate = caliButton;
-    return calibrate;
-}
-
 function Camera() {
+    const { caliButton, setCaliButton } = useCalibrationContext()!;
+
     const webcamRef = useRef<Webcam>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const lipsRef = useRef<HTMLCanvasElement>(null);
@@ -113,6 +110,8 @@ function Camera() {
     }, []);
 
     const startPredictLoop = () => {
+        if (rafIdRef.current) return;
+
         const video = webcamRef.current?.video ?? null;
         const overlay = overlayRef.current;
         const landmarker = facelandmarkerRef.current;
@@ -138,9 +137,12 @@ function Camera() {
             const v = webcamRef.current?.video ?? null;
             const lm = facelandmarkerRef.current;
 
-            if (!v || !lm) return;
+            if (!v || !lm) {
+                rafIdRef.current = 0;
+                return;
+            }
 
-            if (v?.currentTime !== lastVideoTimeRef.current) {
+            if (v.currentTime !== lastVideoTimeRef.current) {
                 lastVideoTimeRef.current = v.currentTime;
 
                 const nowMs = performance.now();
@@ -186,7 +188,6 @@ function Camera() {
                         { color: "red", lineWidth: 1 }
                     );
 
-                    // Extract the 5 iris points from each eye
                     const leftPoints: Point[] = LEFT_IRIS.map((i) => ({
                         x: landmarks[i].x,
                         y: landmarks[i].y,
@@ -197,18 +198,14 @@ function Camera() {
                         y: landmarks[i].y,
                     }));
 
-                    // Average each iris ring to get one center per eye
                     const leftCenter = avg(leftPoints);
                     const rightCenter = avg(rightPoints);
 
-                    // Raw gaze proxy:
-                    // average the two iris centers into one normalized point
                     const raw: Point = {
                         x: (leftCenter.x + rightCenter.x) / 2,
                         y: (leftCenter.y + rightCenter.y) / 2,
                     };
 
-                    // Moving average smoothing
                     const q = smoothQueueRef.current;
                     q.push(raw);
                     if (q.length > SMOOTH_N) q.shift();
@@ -222,17 +219,14 @@ function Camera() {
                     };
 
                     drawDot(pageCtx, gaze.current.x, gaze.current.y);
-
                 }
-
             }
 
             rafIdRef.current = requestAnimationFrame(predictWebcam);
         };
 
         rafIdRef.current = requestAnimationFrame(predictWebcam);
-
-    }
+    };
 
 
 
@@ -333,36 +327,53 @@ function Camera() {
     return (
         <div>
             <div>
-                {caliButton &&
-                    <div>
-                        <div className="camera-container">
-                            <Webcam className="webcam" ref={webcamRef} audio={false} mirrored
-                                onUserMedia={() => {
-                                    const v = webcamRef.current?.video ?? null;
-                                    if (!v) return;
+                <div>
+                    <div className={!caliButton? "camera-container" : "hide"}>
+                        <Webcam
+                            className={!caliButton ? "webcam" : "hide"}
+                            ref={webcamRef}
+                            audio={false}
+                            mirrored
+                            onUserMedia={() => {
+                                const v = webcamRef.current?.video ?? null;
+                                if (!v) return;
 
-                                    if (v.readyState >= 1) {
+                                if (v.readyState >= 1) {
+                                    startPredictLoop();
+                                    console.log("HI");
+                                } else {
+                                    v.onloadedmetadata = () => {
                                         startPredictLoop();
-                                        console.log("HI");
-                                    } else {
-                                        v.onloadedmetadata = () => {
-                                            startPredictLoop();
-                                            console.log("BYE");
-                                        }
-                                    }
-                                }}
-                                videoConstraints={{ width: camWidth, height: camHeight, facingMode: "user", }} />
-                            <canvas className="overlay" ref={overlayRef} />
-                        </div>
-                        <canvas className="page" ref={canvasRef} />
-                        <canvas className="page" ref={lipsRef} />
-                        <div> gaze: {gaze.current.x.toFixed(3)} {gaze.current.y.toFixed(3)} face: {String(gaze.current.hasFace)} </div>
+                                        console.log("BYE");
+                                    };
+                                }
+                            }}
+                            videoConstraints={{
+                                width: camWidth,
+                                height: camHeight,
+                                facingMode: "user",
+                            }}
+                        />
+                        <canvas className={!caliButton? "overlay": "hide"} ref={overlayRef} />
                     </div>
-                }
+
+                    <canvas className="page" ref={canvasRef} />
+                    <canvas className="page" ref={lipsRef} />
+                </div>
             </div>
 
-            <div className={caliButton ? "calibrateShow" : "calibrateHide"} onClick={() => { setCaliButton(false) }}>Calibrate</div>
-        </div>);
+            {caliButton && <Calibration gaze={gaze} />}
+
+            <div
+                className={!caliButton ? "calibrateShow" : "calibrateHide"}
+                onClick={() => {
+                    setCaliButton(true);
+                }}
+            >
+                Calibrate
+            </div>
+        </div>
+    );
 }
 
 export default Camera

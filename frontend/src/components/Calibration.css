@@ -1,0 +1,40 @@
+.calibration-overlay {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+}
+
+.calibration-dot {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background-color: red;
+}
+
+.calibration-controls {
+    pointer-events: all;
+    position: absolute;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+}
+
+.calibration-btn {
+    min-width: 130px;
+    cursor: pointer;
+}
+
+.calibration-error {
+    margin: 0;
+    color: red;
+}
+
+.calibration-count {
+    margin: 0;
+}
