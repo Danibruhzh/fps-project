@@ -46,7 +46,8 @@ function avg(points: Point[]): Point {
 }
 
 function Camera() {
-    const { caliButton, setCaliButton } = useCalibrationContext()!;
+    const calibrationContext = useCalibrationContext();
+    const { caliButton, setCaliButton, dotCalibrationData } = calibrationContext!;
 
     const webcamRef = useRef<Webcam>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);

@@ -33,12 +33,7 @@ type Props = {
 
 function Calibration({ gaze }: Props) {
     const calibrationContext = useCalibrationContext();
-
-    if (!calibrationContext) {
-        throw new Error("Calibration must be used inside CalibrationProvider");
-    }
-
-    const { setCaliButton } = calibrationContext;
+    const { setCaliButton, setDotCalibrationData } = calibrationContext!;
 
     const [currentDot, setCurrentDot] = useState<number>(0);
     const [calibrationData, setCalibrationData] = useState<CalibrationPoint[]>([]);
@@ -75,25 +70,22 @@ function Calibration({ gaze }: Props) {
         const point = buildCalibrationPoint();
 
         if (!point) return;
+        const updatedData = [...calibrationData, point];
+        console.log("updatedData");
+        console.log(updatedData);
 
-        setCalibrationData((prevData) => {
-            const updatedData = [...prevData, point];
-            
-            
-            console.log("updatedData");
-            console.log(updatedData);
-            return updatedData;
-        });
+        setCalibrationData(updatedData); // technically we dont really need calibrationData
+                                         // but it is a buffer
 
         if (isLastDot) {
             console.log("Calibration complete");
+            setDotCalibrationData(updatedData);
             setCaliButton(false);
             return;
         }
 
         setCurrentDot((prevDot) => prevDot + 1);
-        
-        
+
         console.log("calibrationData");
         console.log(calibrationData);
     }
