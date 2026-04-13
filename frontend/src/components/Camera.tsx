@@ -21,8 +21,23 @@ const windowHeight = 728;
 
 const LEFT_IRIS = [468, 469, 470, 471, 472];
 const RIGHT_IRIS = [473, 474, 475, 476, 477];
+const RIGHT_EYE_RIGHT_CORNER = 33;
+const RIGHT_EYE_LEFT_CORNER = 133;
+const RIGHT_EYE_TOP = 159;
+const RIGHT_EYE_BOTTOM = 145;
+
+const LEFT_EYE_RIGHT_CORNER = 362;
+const LEFT_EYE_LEFT_CORNER = 263;
+const LEFT_EYE_TOP = 386;
+const LEFT_EYE_BOTTOM = 374;
+
 // const widthRatio = camWidth / windowWidth;
 // const heightRatio = camHeight / windowHeight;
+
+// clamp(value, min, max) keeps value between min and max (will be 0 and 1)
+function clamp(value: number, min: number, max: number): number {
+    return Math.max(min, Math.min(max, value));
+}
 
 function drawDot(ctx: CanvasRenderingContext2D, nx: number, ny: number) {
     // converts normalized points into pixels
@@ -43,6 +58,31 @@ function avg(points: Point[]): Point {
         sy += p.y;
     }
     return { x: sx / points.length, y: sy / points.length };
+}
+
+function getRelativeIrisPosition(irisCenter: Point, eyeLeftCorner: Point, eyeRightCorner: Point, eyeTop: Point, eyeBottom: Point): Point | null {
+    const eyeWidth = eyeLeftCorner.x - eyeRightCorner.x;
+    const eyeHeight = eyeBottom.y - eyeTop.y;
+
+    if (Math.abs(eyeWidth) < 0.000001 || Math.abs(eyeHeight) < 0.000001) {
+        return null;
+    }
+
+    const relativeX = (irisCenter.x - eyeRightCorner.x) / eyeWidth;
+    const relativeY = (irisCenter.y - eyeTop.y) / eyeHeight;
+
+    console.log("irisCenter.x", irisCenter.x, "irisCenter.y", irisCenter.y);
+
+    console.log("eyeLeftcorner.x", eyeLeftCorner.x, "eyebottom.y", eyeBottom.y);
+    console.log("eyeRightcorner.x", eyeRightCorner.x, "eyetop.y", eyeTop.y);
+    console.log("eyewidth", eyeWidth, "eyeheight", eyeHeight);
+    
+    console.log("relativeX", relativeX, "relativeY", relativeY);
+
+    return {
+        x: clamp(relativeX, 0, 1),
+        y: clamp(relativeY, 0, 1),
+    };
 }
 
 function Camera() {
@@ -202,24 +242,105 @@ function Camera() {
                     const leftCenter = avg(leftPoints);
                     const rightCenter = avg(rightPoints);
 
-                    const raw: Point = {
-                        x: (leftCenter.x + rightCenter.x) / 2,
-                        y: (leftCenter.y + rightCenter.y) / 2,
+                    const leftEyeLeftCorner: Point = {
+                        x: landmarks[LEFT_EYE_LEFT_CORNER].x,
+                        y: landmarks[LEFT_EYE_LEFT_CORNER].y,
                     };
 
-                    const q = smoothQueueRef.current;
-                    q.push(raw);
-                    if (q.length > SMOOTH_N) q.shift();
-
-                    const smoothed = avg(q);
-
-                    gaze.current = {
-                        x: smoothed.x,
-                        y: smoothed.y,
-                        hasFace: true,
+                    const leftEyeRightCorner: Point = {
+                        x: landmarks[LEFT_EYE_RIGHT_CORNER].x,
+                        y: landmarks[LEFT_EYE_RIGHT_CORNER].y,
                     };
 
-                    drawDot(pageCtx, gaze.current.x, gaze.current.y);
+                    const leftEyeTop: Point = {
+                        x: landmarks[LEFT_EYE_TOP].x,
+                        y: landmarks[LEFT_EYE_TOP].y,
+                    };
+
+                    const leftEyeBottom: Point = {
+                        x: landmarks[LEFT_EYE_BOTTOM].x,
+                        y: landmarks[LEFT_EYE_BOTTOM].y,
+                    };
+
+                    const rightEyeLeftCorner: Point = {
+                        x: landmarks[RIGHT_EYE_LEFT_CORNER].x,
+                        y: landmarks[RIGHT_EYE_LEFT_CORNER].y,
+                    };
+
+                    const rightEyeRightCorner: Point = {
+                        x: landmarks[RIGHT_EYE_RIGHT_CORNER].x,
+                        y: landmarks[RIGHT_EYE_RIGHT_CORNER].y,
+                    };
+
+                    const rightEyeTop: Point = {
+                        x: landmarks[RIGHT_EYE_TOP].x,
+                        y: landmarks[RIGHT_EYE_TOP].y,
+                    };
+
+                    const rightEyeBottom: Point = {
+                        x: landmarks[RIGHT_EYE_BOTTOM].x,
+                        y: landmarks[RIGHT_EYE_BOTTOM].y,
+                    };
+
+                    // console.log("right eye top", rightEyeTop);
+                    // console.log("right eye bottom", rightEyeBottom);
+                    // console.log("right eye right", rightEyeRightCorner);
+                    // console.log("right eye left", rightEyeLeftCorner);
+                    // console.log("left eye top", leftEyeTop);
+                    // console.log("left eye bottom", leftEyeBottom);
+                    // console.log("left eye right", leftEyeRightCorner);
+                    // console.log("left eye left", leftEyeLeftCorner);
+
+                    const leftRelative = getRelativeIrisPosition(
+                        leftCenter,
+                        leftEyeLeftCorner,
+                        leftEyeRightCorner,
+                        leftEyeTop,
+                        leftEyeBottom
+                    );
+
+                    const rightRelative = getRelativeIrisPosition(
+                        rightCenter,
+                        rightEyeLeftCorner,
+                        rightEyeRightCorner,
+                        rightEyeTop,
+                        rightEyeBottom
+                    );
+
+                    console.log("left relative", leftRelative);
+                    console.log("right relative", rightRelative);
+
+
+                    if (leftRelative && rightRelative) {
+                        const raw: Point = {
+                            x: (leftCenter.x + rightCenter.x) / 2,
+                            y: (leftCenter.y + rightCenter.y) / 2,
+                        };
+
+                        const q = smoothQueueRef.current;
+                        q.push(raw);
+
+                        if (q.length > SMOOTH_N) {
+                            q.shift();
+                        }
+
+                        const smoothed = avg(q);
+
+                        gaze.current = {
+                            x: smoothed.x,
+                            y: smoothed.y,
+                            hasFace: true,
+                        };
+
+                        drawDot(pageCtx, gaze.current.x, gaze.current.y);
+
+                    } else {
+                        gaze.current = {
+                            x: 0,
+                            y: 0,
+                            hasFace: false,
+                        }
+                    }
                 }
             }
 
@@ -329,7 +450,7 @@ function Camera() {
         <div>
             <div>
                 <div>
-                    <div className={!caliButton? "camera-container" : "hide"}>
+                    <div className={!caliButton ? "camera-container" : "hide"}>
                         <Webcam
                             className={!caliButton ? "webcam" : "hide"}
                             ref={webcamRef}
@@ -355,7 +476,7 @@ function Camera() {
                                 facingMode: "user",
                             }}
                         />
-                        <canvas className={!caliButton? "overlay": "hide"} ref={overlayRef} />
+                        <canvas className={!caliButton ? "overlay" : "hide"} ref={overlayRef} />
                     </div>
 
                     <canvas className="page" ref={canvasRef} />
