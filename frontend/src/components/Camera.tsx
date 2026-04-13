@@ -5,6 +5,13 @@ import { useCalibrationContext } from "../context/context";
 import Calibration from "./Calibration";
 import "./Camera.css"
 
+
+// ******** NEXT FIX **********
+// 1. need to fix the irisCenter.x calculation
+//   a. I think this comes from the avg function or the landmarks
+// 2. need to fix why the dot still moves with face
+
+
 type Point = {
     x: number;
     y: number
