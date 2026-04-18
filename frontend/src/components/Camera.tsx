@@ -7,10 +7,9 @@ import "./Camera.css"
 
 
 // ******** NEXT FIX **********
-// 1. need to fix the irisCenter.x calculation
-//   a. I think this comes from the avg function or the landmarks
-// 2. need to fix why the dot still moves with face
-
+// 1. need to fix why the dot still moves with face
+// 2. need to figure out how to get relativeY position because eyelids move with iris 
+//      when you look up and down.
 
 type Point = {
     x: number;
@@ -21,13 +20,15 @@ type Gaze = {
     y: number;
     hasFace: boolean;
 };
+
 const camWidth = 250;
 const camHeight = 180;
 const windowWidth = 1535;
 const windowHeight = 728;
 
-const LEFT_IRIS = [468, 469, 470, 471, 472];
-const RIGHT_IRIS = [473, 474, 475, 476, 477];
+
+const LEFT_IRIS = [473, 474, 475, 476, 477];
+const RIGHT_IRIS = [468, 469, 470, 471, 472];
 const RIGHT_EYE_RIGHT_CORNER = 33;
 const RIGHT_EYE_LEFT_CORNER = 133;
 const RIGHT_EYE_TOP = 159;
@@ -78,13 +79,13 @@ function getRelativeIrisPosition(irisCenter: Point, eyeLeftCorner: Point, eyeRig
     const relativeX = (irisCenter.x - eyeRightCorner.x) / eyeWidth;
     const relativeY = (irisCenter.y - eyeTop.y) / eyeHeight;
 
-    console.log("irisCenter.x", irisCenter.x, "irisCenter.y", irisCenter.y);
+    //console.log("irisCenter.x", irisCenter.x, "irisCenter.y", irisCenter.y);
 
-    console.log("eyeLeftcorner.x", eyeLeftCorner.x, "eyebottom.y", eyeBottom.y);
-    console.log("eyeRightcorner.x", eyeRightCorner.x, "eyetop.y", eyeTop.y);
-    console.log("eyewidth", eyeWidth, "eyeheight", eyeHeight);
+    //console.log("eyeLeftcorner.x", eyeLeftCorner.x, "eyebottom.y", eyeBottom.y);
+    //console.log("eyeRightcorner.x", eyeRightCorner.x, "eyetop.y", eyeTop.y);
+    //console.log("eyewidth", eyeWidth, "eyeheight", eyeHeight);
     
-    console.log("relativeX", relativeX, "relativeY", relativeY);
+    //console.log("relativeX", relativeX, "relativeY", relativeY);
 
     return {
         x: clamp(relativeX, 0, 1),
@@ -241,10 +242,14 @@ function Camera() {
                         y: landmarks[i].y,
                     }));
 
+                    //console.log(leftPoints);
+
                     const rightPoints: Point[] = RIGHT_IRIS.map((i) => ({
                         x: landmarks[i].x,
                         y: landmarks[i].y,
                     }));
+
+                    //console.log(rightPoints);
 
                     const leftCenter = avg(leftPoints);
                     const rightCenter = avg(rightPoints);
