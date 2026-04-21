@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useCalibrationContext } from "../context/context";
 import "./Calibration.css";
 
@@ -33,7 +33,7 @@ type Props = {
 
 function Calibration({ gaze }: Props) {
     const calibrationContext = useCalibrationContext();
-    const { setCaliButton, setDotCalibrationData } = calibrationContext!;
+    const { setCaliButton, setDotCalibrationData, dotCalibrationData } = calibrationContext!;
 
     const [currentDot, setCurrentDot] = useState<number>(0);
     const [calibrationData, setCalibrationData] = useState<CalibrationPoint[]>([]);
@@ -65,6 +65,7 @@ function Calibration({ gaze }: Props) {
         };
     }
 
+
     function handleConfirm() {
         console.log("click!");
         const point = buildCalibrationPoint();
@@ -74,8 +75,9 @@ function Calibration({ gaze }: Props) {
         console.log("updatedData");
         console.log(updatedData);
 
+
         setCalibrationData(updatedData); // technically we dont really need calibrationData
-                                         // but it is a buffer
+        // but it is a buffer
 
         if (isLastDot) {
             console.log("Calibration complete");

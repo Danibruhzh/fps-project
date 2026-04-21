@@ -7,8 +7,10 @@ import "./Camera.css"
 
 
 // ******** NEXT FIX **********
-// 1. need to fix why the dot still moves with face
-// 2. need to figure out how to get relativeY position because eyelids move with iris 
+// 1. need to fix the y calibration.
+//      its the eyelids fault.
+// 2. remove the stretchY and get a better solution to the eyelid problem
+// 3. need to figure out how to get relativeY position because eyelids move with iris 
 //      when you look up and down.
 
 type Point = {
@@ -19,6 +21,13 @@ type Gaze = {
     x: number;
     y: number;
     hasFace: boolean;
+};
+
+type CalibrationPoint = {
+    targetX: number;
+    targetY: number;
+    gazeX: number;
+    gazeY: number;
 };
 
 const camWidth = 250;
@@ -84,12 +93,59 @@ function getRelativeIrisPosition(irisCenter: Point, eyeLeftCorner: Point, eyeRig
     //console.log("eyeLeftcorner.x", eyeLeftCorner.x, "eyebottom.y", eyeBottom.y);
     //console.log("eyeRightcorner.x", eyeRightCorner.x, "eyetop.y", eyeTop.y);
     //console.log("eyewidth", eyeWidth, "eyeheight", eyeHeight);
-    
+
     //console.log("relativeX", relativeX, "relativeY", relativeY);
 
     return {
         x: clamp(relativeX, 0, 1),
         y: clamp(relativeY, 0, 1),
+    };
+}
+
+function stretchY(y: number, factor: number = 3): number {
+    return clamp((y - 0.5) * factor + 0.5, 0, 1);
+}
+
+function mapGazeToScreen(gaze: Point, calibrationData: CalibrationPoint[], k: number): Point | null {
+    if (calibrationData.length === 0) {
+        return null;
+    }
+
+    const distances = calibrationData.map((point) => {
+        const dx = gaze.x - point.gazeX;
+        const dy = gaze.y - point.gazeY;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+
+        return {
+            targetX: point.targetX,
+            targetY: point.targetY,
+            distance,
+        };
+    });
+
+    distances.sort((a, b) => a.distance - b.distance);
+
+    const nearest = distances.slice(0, Math.min(k, distances.length));
+
+    let weightedX = 0;
+    let weightedY = 0;
+    let totalWeight = 0;
+
+    for (const point of nearest) {
+        const weight = 1 / (point.distance + 0.02);
+
+        weightedX += point.targetX * weight;
+        weightedY += point.targetY * weight;
+        totalWeight += weight;
+    }
+
+    if (totalWeight === 0) {
+        return null;
+    }
+
+    return {
+        x: 1 - clamp(weightedX / totalWeight, 0, 1),
+        y: clamp(weightedY / totalWeight, 0, 1),
     };
 }
 
@@ -107,7 +163,7 @@ function Camera() {
     const rafIdRef = useRef<number>(0);
     const lastVideoTimeRef = useRef<number>(-1);
 
-    const gaze = useRef<Gaze>({ x: 0.5, y: 0.5, hasFace: false });
+    const gaze = useRef<Gaze | null>(null);
 
     // smoothQueueRef stores the recent gaze points for moving-average smoothing
     const smoothQueueRef = useRef<Point[]>([]);
@@ -116,7 +172,21 @@ function Camera() {
     // 1 = fastest but jittery
     // 3 = good balance
     // 5 = smoother but more lag
-    const SMOOTH_N = 1;
+    const SMOOTH_N = 4;
+
+    const dotCalibrationDataRef = useRef(dotCalibrationData);
+
+    useEffect(() => {
+        console.log("context dotCalibrationData:", dotCalibrationData);
+        dotCalibrationDataRef.current = dotCalibrationData;
+
+        console.log(
+            dotCalibrationData.map((p) => ({
+                targetY: p.targetY,
+                gazeY: p.gazeY,
+            }))
+        );
+    }, [dotCalibrationData]);
 
     useEffect(() => {
         let cancelled = false;
@@ -200,31 +270,33 @@ function Camera() {
                 overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
 
                 if (!results.faceLandmarks?.length) {
-                    gaze.current = { ...gaze.current, hasFace: false };
-                    pageCtx.clearRect(0, 0, canvas.width, canvas.height);
-                    lipsCtx.clearRect(0, 0, lips.width, lips.height);
+                    if (gaze.current) {
+                        gaze.current = { ...gaze.current, hasFace: false };
+                        pageCtx.clearRect(0, 0, canvas.width, canvas.height);
+                        lipsCtx.clearRect(0, 0, lips.width, lips.height);
+                    }
                 } else {
                     const landmarks = results.faceLandmarks[0];
 
                     drawingUtils.drawConnectors(
                         landmarks,
                         FaceLandmarker.FACE_LANDMARKS_LEFT_EYE,
-                        { color: "blue", lineWidth: 1 }
+                        { color: "blue", lineWidth: 0.3 }
                     );
                     drawingUtils.drawConnectors(
                         landmarks,
                         FaceLandmarker.FACE_LANDMARKS_RIGHT_EYE,
-                        { color: "blue", lineWidth: 1 }
+                        { color: "blue", lineWidth: 0.3 }
                     );
                     drawingUtils.drawConnectors(
                         landmarks,
                         FaceLandmarker.FACE_LANDMARKS_LEFT_IRIS,
-                        { color: "blue", lineWidth: 1 }
+                        { color: "blue", lineWidth: 0.3 }
                     );
                     drawingUtils.drawConnectors(
                         landmarks,
                         FaceLandmarker.FACE_LANDMARKS_RIGHT_IRIS,
-                        { color: "blue", lineWidth: 1 }
+                        { color: "blue", lineWidth: 0.3 }
                     );
                     drawingUtils.drawConnectors(
                         landmarks,
@@ -319,14 +391,13 @@ function Camera() {
                         rightEyeBottom
                     );
 
-                    console.log("left relative", leftRelative);
-                    console.log("right relative", rightRelative);
-
+                    //console.log("left relative", leftRelative);
+                    //console.log("right relative", rightRelative);
 
                     if (leftRelative && rightRelative) {
                         const raw: Point = {
-                            x: (leftCenter.x + rightCenter.x) / 2,
-                            y: (leftCenter.y + rightCenter.y) / 2,
+                            x: (leftRelative.x + rightRelative.x) / 2,
+                            y: stretchY((leftRelative.y + rightRelative.y) / 2, 3),
                         };
 
                         const q = smoothQueueRef.current;
@@ -344,12 +415,22 @@ function Camera() {
                             hasFace: true,
                         };
 
-                        drawDot(pageCtx, gaze.current.x, gaze.current.y);
+                        if (!caliButton && dotCalibrationDataRef.current.length > 0) {
+                            const mapped = mapGazeToScreen(smoothed, dotCalibrationDataRef.current, 5);
 
+                            if (mapped) {
+                                drawDot(pageCtx, mapped.x, mapped.y);
+                                console.log("mapped");
+                            }
+                        }
+
+
+                        //console.log("didnt work");
+                        //console.log(dotCalibrationData);
                     } else {
                         gaze.current = {
-                            x: 0,
-                            y: 0,
+                            x: 0.5,
+                            y: 0.5,
                             hasFace: false,
                         }
                     }
