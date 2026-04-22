@@ -7,11 +7,8 @@ import "./Camera.css"
 
 
 // ******** NEXT FIX **********
-// 1. need to fix the y calibration.
-//      its the eyelids fault.
-// 2. remove the stretchY and get a better solution to the eyelid problem
-// 3. need to figure out how to get relativeY position because eyelids move with iris 
-//      when you look up and down.
+// 1. need to fix camera.tsx
+//      get from ChatGPT
 
 type Point = {
     x: number;
@@ -28,6 +25,15 @@ type CalibrationPoint = {
     targetY: number;
     gazeX: number;
     gazeY: number;
+};
+
+type CalibrationModel = {
+    leftGazeX: number;
+    centerGazeX: number;
+    rightGazeX: number;
+    topGazeY: number;
+    middleGazeY: number;
+    bottomGazeY: number;
 };
 
 const camWidth = 250;
@@ -77,16 +83,107 @@ function avg(points: Point[]): Point {
     return { x: sx / points.length, y: sy / points.length };
 }
 
-function getRelativeIrisPosition(irisCenter: Point, eyeLeftCorner: Point, eyeRightCorner: Point, eyeTop: Point, eyeBottom: Point): Point | null {
-    const eyeWidth = eyeLeftCorner.x - eyeRightCorner.x;
-    const eyeHeight = eyeBottom.y - eyeTop.y;
+function average(values: number[]): number {
+    if (values.length === 0) {
+        return 0;
+    }
 
-    if (Math.abs(eyeWidth) < 0.000001 || Math.abs(eyeHeight) < 0.000001) {
+    let sum = 0;
+
+    for (const value of values) {
+        sum += value;
+    }
+
+    return sum / values.length;
+}
+
+function buildCalibrationModel(data: CalibrationPoint[]): CalibrationModel | null {
+    if (data.length < 9) {
         return null;
     }
 
+    const leftColumn = data.filter((point) => point.targetX === 0.05);
+    const centerColumn = data.filter((point) => point.targetX === 0.5);
+    const rightColumn = data.filter((point) => point.targetX === 0.95);
+
+    const topRow = data.filter((point) => point.targetY === 0.05);
+    const middleRow = data.filter((point) => point.targetY === 0.5);
+    const bottomRow = data.filter((point) => point.targetY === 0.95);
+
+    if (leftColumn.length === 0 ||
+        centerColumn.length === 0 ||
+        rightColumn.length === 0 ||
+        topRow.length === 0 ||
+        middleRow.length === 0 ||
+        bottomRow.length === 0
+    ) {
+        return null;
+    }
+
+    return {
+        leftGazeX: average(leftColumn.map((point) => point.gazeX)),
+        centerGazeX: average(centerColumn.map((point) => point.gazeX)),
+        rightGazeX: average(rightColumn.map((point) => point.gazeX)),
+        topGazeY: average(topRow.map((point) => point.gazeY)),
+        middleGazeY: average(middleRow.map((point) => point.gazeY)),
+        bottomGazeY: average(bottomRow.map((point) => point.gazeY)),
+    };
+}
+
+function mapRange(value: number, inStart: number, inEnd: number, outStart: number, outEnd: number): number {
+    const inputRange = inEnd - inStart;
+
+    if (Math.abs(inputRange) < 0.000001) {
+        return outStart;
+    }
+
+    const t = (value - inStart) / inputRange;
+    return outStart + t * (outEnd - outStart);
+}
+
+function mapXPiecewise(gazeX: number, model: CalibrationModel): number {
+    let mappedX: number;
+
+    if (gazeX >= model.centerGazeX) {
+        // left half of screen: 0 -> 0.5
+        mappedX = mapRange(gazeX, model.leftGazeX, model.centerGazeX, 0, 0.5);
+    } else {
+        // right half of screen: 0.5 -> 1
+        mappedX = mapRange(gazeX, model.centerGazeX, model.rightGazeX, 0.5, 1);
+    }
+
+    return clamp(mappedX, 0, 1);
+}
+
+function mapYPiecewise(gazeY: number, model: CalibrationModel): number {
+    let mappedY: number;
+
+    if (gazeY <= model.middleGazeY) {
+        // top half of screen: 0 -> 0.5
+        mappedY = mapRange(gazeY, model.topGazeY, model.middleGazeY, 0, 0.5);
+    } else {
+        // bottom half of screen: 0.5 -> 1
+        mappedY = mapRange(gazeY, model.middleGazeY, model.bottomGazeY, 0.5, 1);
+    }
+
+    return clamp(mappedY, 0, 1);
+}
+
+
+function getRelativeIrisPosition(irisCenter: Point, eyeLeftCorner: Point, eyeRightCorner: Point, eyeTop: Point, eyeBottom: Point): Point | null {
+    const eyeWidth = eyeLeftCorner.x - eyeRightCorner.x;
+    //const eyeHeight = eyeBottom.y - eyeTop.y;
+
+
+    // removed  (|| Math.abs(eyeHeight) < 0.000001) in the following conditional
+    if (Math.abs(eyeWidth) < 0.000001) {
+        return null;
+    }
+
+    const cornerCenterY = (eyeLeftCorner.y + eyeRightCorner.y) / 2;
+
     const relativeX = (irisCenter.x - eyeRightCorner.x) / eyeWidth;
-    const relativeY = (irisCenter.y - eyeTop.y) / eyeHeight;
+    const relativeY = 0.5 + (irisCenter.y - cornerCenterY) / eyeWidth;
 
     //console.log("irisCenter.x", irisCenter.x, "irisCenter.y", irisCenter.y);
 
@@ -102,52 +199,61 @@ function getRelativeIrisPosition(irisCenter: Point, eyeLeftCorner: Point, eyeRig
     };
 }
 
+function mapGazeRelative(gaze: Point, model: CalibrationModel): Point | null {
+    return {
+        x: mapXPiecewise(gaze.x, model),
+        y: mapYPiecewise(gaze.y, model),
+    };
+}
+
+// might not need
 function stretchY(y: number, factor: number = 3): number {
     return clamp((y - 0.5) * factor + 0.5, 0, 1);
 }
 
-function mapGazeToScreen(gaze: Point, calibrationData: CalibrationPoint[], k: number): Point | null {
-    if (calibrationData.length === 0) {
-        return null;
-    }
+// kNN model
+// function mapGazeToScreen(gaze: Point, calibrationData: CalibrationPoint[], k: number): Point | null {
+//     if (calibrationData.length === 0) {
+//         return null;
+//     }
 
-    const distances = calibrationData.map((point) => {
-        const dx = gaze.x - point.gazeX;
-        const dy = gaze.y - point.gazeY;
-        const distance = Math.sqrt(dx * dx + dy * dy);
+//     const distances = calibrationData.map((point) => {
+//         const dx = gaze.x - point.gazeX;
+//         const dy = gaze.y - point.gazeY;
+//         const distance = Math.sqrt(dx * dx + dy * dy);
 
-        return {
-            targetX: point.targetX,
-            targetY: point.targetY,
-            distance,
-        };
-    });
+//         return {
+//             targetX: point.targetX,
+//             targetY: point.targetY,
+//             distance,
+//         };
+//     });
 
-    distances.sort((a, b) => a.distance - b.distance);
+//     distances.sort((a, b) => a.distance - b.distance);
 
-    const nearest = distances.slice(0, Math.min(k, distances.length));
+//     const nearest = distances.slice(0, Math.min(k, distances.length));
 
-    let weightedX = 0;
-    let weightedY = 0;
-    let totalWeight = 0;
+//     let weightedX = 0;
+//     let weightedY = 0;
+//     let totalWeight = 0;
 
-    for (const point of nearest) {
-        const weight = 1 / (point.distance + 0.02);
+//     for (const point of nearest) {
+//         const weight = 1 / (point.distance + 0.02);
 
-        weightedX += point.targetX * weight;
-        weightedY += point.targetY * weight;
-        totalWeight += weight;
-    }
+//         weightedX += point.targetX * weight;
+//         weightedY += point.targetY * weight;
+//         totalWeight += weight;
+//     }
 
-    if (totalWeight === 0) {
-        return null;
-    }
+//     if (totalWeight === 0) {
+//         return null;
+//     }
 
-    return {
-        x: 1 - clamp(weightedX / totalWeight, 0, 1),
-        y: clamp(weightedY / totalWeight, 0, 1),
-    };
-}
+//     return {
+//         x: 1 - clamp(weightedX / totalWeight, 0, 1),
+//         y: clamp(weightedY / totalWeight, 0, 1),
+//     };
+// }
 
 function Camera() {
     const calibrationContext = useCalibrationContext();
@@ -174,18 +280,11 @@ function Camera() {
     // 5 = smoother but more lag
     const SMOOTH_N = 4;
 
-    const dotCalibrationDataRef = useRef(dotCalibrationData);
+    const calibrationModelRef = useRef<CalibrationModel | null>(null);
 
     useEffect(() => {
         console.log("context dotCalibrationData:", dotCalibrationData);
-        dotCalibrationDataRef.current = dotCalibrationData;
-
-        console.log(
-            dotCalibrationData.map((p) => ({
-                targetY: p.targetY,
-                gazeY: p.gazeY,
-            }))
-        );
+        calibrationModelRef.current = buildCalibrationModel(dotCalibrationData);
     }, [dotCalibrationData]);
 
     useEffect(() => {
@@ -415,12 +514,11 @@ function Camera() {
                             hasFace: true,
                         };
 
-                        if (!caliButton && dotCalibrationDataRef.current.length > 0) {
-                            const mapped = mapGazeToScreen(smoothed, dotCalibrationDataRef.current, 5);
+                        if (!caliButton && calibrationModelRef.current) {
+                            const mapped = mapGazeRelative(smoothed, calibrationModelRef.current);
 
                             if (mapped) {
                                 drawDot(pageCtx, mapped.x, mapped.y);
-                                console.log("mapped");
                             }
                         }
 
