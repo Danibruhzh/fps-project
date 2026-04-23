@@ -32,7 +32,7 @@ type CalibrationModel = {
     centerGazeX: number;
     rightGazeX: number;
     topGazeY: number;
-    middleGazeY: number;
+    centerGazeY: number;
     bottomGazeY: number;
 };
 
@@ -107,14 +107,14 @@ function buildCalibrationModel(data: CalibrationPoint[]): CalibrationModel | nul
     const rightColumn = data.filter((point) => point.targetX === 0.95);
 
     const topRow = data.filter((point) => point.targetY === 0.05);
-    const middleRow = data.filter((point) => point.targetY === 0.5);
+    const centerRow = data.filter((point) => point.targetY === 0.5);
     const bottomRow = data.filter((point) => point.targetY === 0.95);
 
     if (leftColumn.length === 0 ||
         centerColumn.length === 0 ||
         rightColumn.length === 0 ||
         topRow.length === 0 ||
-        middleRow.length === 0 ||
+        centerRow.length === 0 ||
         bottomRow.length === 0
     ) {
         return null;
@@ -125,7 +125,7 @@ function buildCalibrationModel(data: CalibrationPoint[]): CalibrationModel | nul
         centerGazeX: average(centerColumn.map((point) => point.gazeX)),
         rightGazeX: average(rightColumn.map((point) => point.gazeX)),
         topGazeY: average(topRow.map((point) => point.gazeY)),
-        middleGazeY: average(middleRow.map((point) => point.gazeY)),
+        centerGazeY: average(centerRow.map((point) => point.gazeY)),
         bottomGazeY: average(bottomRow.map((point) => point.gazeY)),
     };
 }
@@ -152,18 +152,18 @@ function mapXPiecewise(gazeX: number, model: CalibrationModel): number {
         mappedX = mapRange(gazeX, model.centerGazeX, model.rightGazeX, 0.5, 1);
     }
 
-    return clamp(mappedX, 0, 1);
+    return 1 - clamp(mappedX, 0, 1);
 }
 
 function mapYPiecewise(gazeY: number, model: CalibrationModel): number {
     let mappedY: number;
 
-    if (gazeY <= model.middleGazeY) {
+    if (gazeY <= model.centerGazeY) {
         // top half of screen: 0 -> 0.5
-        mappedY = mapRange(gazeY, model.topGazeY, model.middleGazeY, 0, 0.5);
+        mappedY = mapRange(gazeY, model.topGazeY, model.centerGazeY, 0, 0.5);
     } else {
         // bottom half of screen: 0.5 -> 1
-        mappedY = mapRange(gazeY, model.middleGazeY, model.bottomGazeY, 0.5, 1);
+        mappedY = mapRange(gazeY, model.centerGazeY, model.bottomGazeY, 0.5, 1);
     }
 
     return clamp(mappedY, 0, 1);
@@ -496,7 +496,7 @@ function Camera() {
                     if (leftRelative && rightRelative) {
                         const raw: Point = {
                             x: (leftRelative.x + rightRelative.x) / 2,
-                            y: stretchY((leftRelative.y + rightRelative.y) / 2, 3),
+                            y: (leftRelative.y + rightRelative.y) / 2,
                         };
 
                         const q = smoothQueueRef.current;
