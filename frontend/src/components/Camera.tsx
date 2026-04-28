@@ -9,6 +9,8 @@ import "./Camera.css"
 // ******** NEXT FIX **********
 // 1. need to fix camera.tsx
 //      get from ChatGPT
+// 2. change from rows and columdns to all points
+// 3. add more points instead of replacing when new calibration
 
 type Point = {
     x: number;
@@ -28,12 +30,12 @@ type CalibrationPoint = {
 };
 
 type CalibrationModel = {
-    leftGazeX: number;
-    centerGazeX: number;
-    rightGazeX: number;
-    topGazeY: number;
-    centerGazeY: number;
-    bottomGazeY: number;
+    a: number;
+    b: number;
+    c: number;
+    d: number;
+    e: number;
+    f: number;
 };
 
 const camWidth = 250;
@@ -83,18 +85,93 @@ function avg(points: Point[]): Point {
     return { x: sx / points.length, y: sy / points.length };
 }
 
-function average(values: number[]): number {
-    if (values.length === 0) {
+function getEyeOpenness(eyeTop: Point, eyeBottom: Point, eyeLeftCorner: Point, eyeRightCorner: Point): number {
+    const eyeHeight = eyeBottom.y - eyeTop.y;
+    const eyeWidth = eyeLeftCorner.x - eyeRightCorner.x;
+
+    if (Math.abs(eyeWidth) < 0.000001) {
         return 0;
     }
 
-    let sum = 0;
+    return eyeHeight / eyeWidth;
+}
 
-    for (const value of values) {
-        sum += value;
+function solve3x3(matrix: number[][], values: number[]): [number, number, number] | null {
+    const a = matrix.map((row, i) => [...row, values[i]]);
+
+    for (let col = 0; col < 3; col++) {
+        let bestRow = col;
+
+        for (let row = col + 1; row < 3; row++) {
+            if (Math.abs(a[row][col]) > Math.abs(a[bestRow][col])) {
+                bestRow = row;
+            }
+        }
+
+        if (Math.abs(a[bestRow][col]) < 0.000001) {
+            return null;
+        }
+
+        [a[col], a[bestRow]] = [a[bestRow], a[col]];
+
+        const pivot = a[col][col];
+
+        for (let j = col; j < 4; j++) {
+            a[col][j] /= pivot;
+        }
+
+        for (let row = 0; row < 3; row++) {
+            if (row === col) continue;
+
+            const factor = a[row][col];
+
+            for (let j = col; j < 4; j++) {
+                a[row][j] -= factor * a[col][j];
+            }
+        }
     }
 
-    return sum / values.length;
+    return [a[0][3], a[1][3], a[2][3]];
+}
+
+function fitAffineCoefficients(data: CalibrationPoint[], targetKey: "targetX" | "targetY"): [number, number, number] | null {
+    let sumGXGX = 0;
+    let sumGXGY = 0;
+    let sumGX = 0;
+    let sumGYGY = 0;
+    let sumGY = 0;
+    let sumOne = data.length;
+
+    let sumGXT = 0;
+    let sumGYT = 0;
+    let sumT = 0;
+
+    for (const point of data) {
+        const gx = point.gazeX;
+        const gy = point.gazeY;
+        const target = point[targetKey];
+
+        sumGXGX += gx * gx;
+        sumGXGY += gx * gy;
+        sumGX += gx;
+
+        sumGYGY += gy * gy;
+        sumGY += gy;
+
+        sumGXT += gx * target;
+        sumGYT += gy * target;
+        sumT += target;
+    }
+
+    const matrix = [
+        [sumGXGX, sumGXGY, sumGX],
+        [sumGXGY, sumGYGY, sumGY],
+        [sumGX, sumGY, sumOne],
+    ];
+
+    const values = [sumGXT, sumGYT, sumT];
+
+    return solve3x3(matrix, values);
 }
 
 function buildCalibrationModel(data: CalibrationPoint[]): CalibrationModel | null {
@@ -102,77 +179,36 @@ function buildCalibrationModel(data: CalibrationPoint[]): CalibrationModel | nul
         return null;
     }
 
-    const leftColumn = data.filter((point) => point.targetX === 0.05);
-    const centerColumn = data.filter((point) => point.targetX === 0.5);
-    const rightColumn = data.filter((point) => point.targetX === 0.95);
+    const xCoefficients = fitAffineCoefficients(data, "targetX");
+    const yCoefficients = fitAffineCoefficients(data, "targetY");
 
-    const topRow = data.filter((point) => point.targetY === 0.05);
-    const centerRow = data.filter((point) => point.targetY === 0.5);
-    const bottomRow = data.filter((point) => point.targetY === 0.95);
-
-    if (leftColumn.length === 0 ||
-        centerColumn.length === 0 ||
-        rightColumn.length === 0 ||
-        topRow.length === 0 ||
-        centerRow.length === 0 ||
-        bottomRow.length === 0
-    ) {
+    if (!xCoefficients || !yCoefficients) {
         return null;
     }
 
     return {
-        leftGazeX: average(leftColumn.map((point) => point.gazeX)),
-        centerGazeX: average(centerColumn.map((point) => point.gazeX)),
-        rightGazeX: average(rightColumn.map((point) => point.gazeX)),
-        topGazeY: average(topRow.map((point) => point.gazeY)),
-        centerGazeY: average(centerRow.map((point) => point.gazeY)),
-        bottomGazeY: average(bottomRow.map((point) => point.gazeY)),
+        a: xCoefficients[0],
+        b: xCoefficients[1],
+        c: xCoefficients[2],
+        d: yCoefficients[0],
+        e: yCoefficients[1],
+        f: yCoefficients[2],
     };
 }
 
-function mapRange(value: number, inStart: number, inEnd: number, outStart: number, outEnd: number): number {
-    const inputRange = inEnd - inStart;
+function mapGazeRelative(gaze: Point, model: CalibrationModel): Point {
+    const mappedX = model.a * gaze.x + model.b * gaze.y + model.c;
+    const mappedY = model.d * gaze.x + model.e * gaze.y + model.f;
 
-    if (Math.abs(inputRange) < 0.000001) {
-        return outStart;
-    }
-
-    const t = (value - inStart) / inputRange;
-    return outStart + t * (outEnd - outStart);
+    return {
+        x: 1 - clamp(mappedX, 0, 1),
+        y: clamp(mappedY, 0, 1),
+    };
 }
-
-function mapXPiecewise(gazeX: number, model: CalibrationModel): number {
-    let mappedX: number;
-
-    if (gazeX >= model.centerGazeX) {
-        // left half of screen: 0 -> 0.5
-        mappedX = mapRange(gazeX, model.leftGazeX, model.centerGazeX, 0, 0.5);
-    } else {
-        // right half of screen: 0.5 -> 1
-        mappedX = mapRange(gazeX, model.centerGazeX, model.rightGazeX, 0.5, 1);
-    }
-
-    return 1 - clamp(mappedX, 0, 1);
-}
-
-function mapYPiecewise(gazeY: number, model: CalibrationModel): number {
-    let mappedY: number;
-
-    if (gazeY <= model.centerGazeY) {
-        // top half of screen: 0 -> 0.5
-        mappedY = mapRange(gazeY, model.topGazeY, model.centerGazeY, 0, 0.5);
-    } else {
-        // bottom half of screen: 0.5 -> 1
-        mappedY = mapRange(gazeY, model.centerGazeY, model.bottomGazeY, 0.5, 1);
-    }
-
-    return clamp(mappedY, 0, 1);
-}
-
 
 function getRelativeIrisPosition(irisCenter: Point, eyeLeftCorner: Point, eyeRightCorner: Point, eyeTop: Point, eyeBottom: Point): Point | null {
     const eyeWidth = eyeLeftCorner.x - eyeRightCorner.x;
-    //const eyeHeight = eyeBottom.y - eyeTop.y;
+    const eyeHeight = eyeBottom.y - eyeTop.y;
 
 
     // removed  (|| Math.abs(eyeHeight) < 0.000001) in the following conditional
@@ -183,7 +219,7 @@ function getRelativeIrisPosition(irisCenter: Point, eyeLeftCorner: Point, eyeRig
     const cornerCenterY = (eyeLeftCorner.y + eyeRightCorner.y) / 2;
 
     const relativeX = (irisCenter.x - eyeRightCorner.x) / eyeWidth;
-    const relativeY = 0.5 + (irisCenter.y - cornerCenterY) / eyeWidth;
+    const relativeY = (irisCenter.y - eyeTop.y) / eyeHeight;
 
     //console.log("irisCenter.x", irisCenter.x, "irisCenter.y", irisCenter.y);
 
@@ -197,18 +233,6 @@ function getRelativeIrisPosition(irisCenter: Point, eyeLeftCorner: Point, eyeRig
         x: clamp(relativeX, 0, 1),
         y: clamp(relativeY, 0, 1),
     };
-}
-
-function mapGazeRelative(gaze: Point, model: CalibrationModel): Point | null {
-    return {
-        x: mapXPiecewise(gaze.x, model),
-        y: mapYPiecewise(gaze.y, model),
-    };
-}
-
-// might not need
-function stretchY(y: number, factor: number = 3): number {
-    return clamp((y - 0.5) * factor + 0.5, 0, 1);
 }
 
 // kNN model
@@ -282,8 +306,10 @@ function Camera() {
 
     const calibrationModelRef = useRef<CalibrationModel | null>(null);
 
+    const lastGoodMappedRef = useRef<Point | null>(null);
+
     useEffect(() => {
-        console.log("context dotCalibrationData:", dotCalibrationData);
+        //console.log("context dotCalibrationData:", dotCalibrationData);
         calibrationModelRef.current = buildCalibrationModel(dotCalibrationData);
     }, [dotCalibrationData]);
 
@@ -514,11 +540,19 @@ function Camera() {
                             hasFace: true,
                         };
 
-                        if (!caliButton && calibrationModelRef.current) {
-                            const mapped = mapGazeRelative(smoothed, calibrationModelRef.current);
+                        const leftOpenness = getEyeOpenness(leftEyeTop, leftEyeBottom, leftEyeLeftCorner, leftEyeRightCorner);
+                        const rightOpenness = getEyeOpenness(rightEyeTop, rightEyeBottom, rightEyeLeftCorner, rightEyeRightCorner);
 
-                            if (mapped) {
-                                drawDot(pageCtx, mapped.x, mapped.y);
+                        const isBlinking = leftOpenness < 0.2 || rightOpenness < 0.2;
+
+                        if (!caliButton && calibrationModelRef.current) {
+                            if (!isBlinking) {
+                                const mapped = mapGazeRelative(smoothed, calibrationModelRef.current);
+                                lastGoodMappedRef.current = mapped;
+                            }
+
+                            if (lastGoodMappedRef.current) {
+                                drawDot(pageCtx, lastGoodMappedRef.current.x, lastGoodMappedRef.current.y);
                             }
                         }
 
