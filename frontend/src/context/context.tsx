@@ -5,6 +5,8 @@ type CalibrationPoint = {
     targetY: number;
     gazeX: number;
     gazeY: number;
+    eyeCenterY: number;
+    eyeOpenness: number;
 };
 
 type CalibrationContextType = {

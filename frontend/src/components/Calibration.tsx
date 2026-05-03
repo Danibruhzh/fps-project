@@ -6,6 +6,8 @@ type Gaze = {
     x: number;
     y: number;
     hasFace: boolean;
+    eyeCenterY: number;
+    eyeOpenness: number;
 };
 
 type CalibrationPoint = {
@@ -13,6 +15,8 @@ type CalibrationPoint = {
     targetY: number;
     gazeX: number;
     gazeY: number;
+    eyeCenterY: number;
+    eyeOpenness: number;
 };
 
 const DOT_POSITIONS = [
@@ -62,6 +66,8 @@ function Calibration({ gaze }: Props) {
             targetY: dot.y,
             gazeX: currentGaze.x,
             gazeY: currentGaze.y,
+            eyeCenterY: currentGaze.eyeCenterY,
+            eyeOpenness: currentGaze.eyeOpenness,
         };
     }
 

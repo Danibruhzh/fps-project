@@ -7,10 +7,8 @@ import "./Camera.css"
 
 
 // ******** NEXT FIX **********
-// 1. need to fix camera.tsx
-//      get from ChatGPT
-// 2. change from rows and columdns to all points
-// 3. add more points instead of replacing when new calibration
+// 1. tune the constants on line 126
+// 2. add feature that allows to add more than 9 calibration points
 
 type Point = {
     x: number;
@@ -20,6 +18,8 @@ type Gaze = {
     x: number;
     y: number;
     hasFace: boolean;
+    eyeCenterY: number;
+    eyeOpenness: number;
 };
 
 type CalibrationPoint = {
@@ -27,6 +27,8 @@ type CalibrationPoint = {
     targetY: number;
     gazeX: number;
     gazeY: number;
+    eyeCenterY: number;
+    eyeOpenness: number;
 };
 
 type CalibrationModel = {
@@ -36,6 +38,8 @@ type CalibrationModel = {
     d: number;
     e: number;
     f: number;
+    baselineEyeCenterY: number;
+    baselineEyeOpenness: number;
 };
 
 const camWidth = 250;
@@ -94,6 +98,43 @@ function getEyeOpenness(eyeTop: Point, eyeBottom: Point, eyeLeftCorner: Point, e
     }
 
     return eyeHeight / eyeWidth;
+}
+
+function getEyeCenterY(eyeLeftCorner: Point, eyeRightCorner: Point): number {
+    return (eyeLeftCorner.y + eyeRightCorner.y) / 2;
+}
+
+function getBaselineCalibrationPoint(data: CalibrationPoint[]): CalibrationPoint {
+    let closest = data[0];
+    let closestDistance = Infinity;
+
+    for (const point of data) {
+        // change this constant (0.5)
+        const dx = point.targetX - 0.5;
+        const dy = point.targetY - 0.5;
+        const distance = dx * dx + dy * dy;
+
+        if (distance < closestDistance) {
+            closestDistance = distance;
+            closest = point;
+        }
+    }
+
+    return closest;
+}
+
+function correctGazeWithEyeShape(gaze: Point, eyeCenterY: number, eyeOpenness: number, baselineEyeCenterY: number, baselineEyeOpenness: number): Point {
+    // change these constants
+    const EYE_CENTER_WEIGHT = 0.7;
+    const EYE_OPENNESS_WEIGHT = 0.1;
+
+    const eyeCenterChange = eyeCenterY - baselineEyeCenterY;
+    const eyeOpennessChange = eyeOpenness - baselineEyeOpenness;
+
+    return {
+        x: gaze.x,
+        y: gaze.y - EYE_CENTER_WEIGHT * eyeCenterChange - EYE_OPENNESS_WEIGHT * eyeOpennessChange,
+    };
 }
 
 function solve3x3(matrix: number[][], values: number[]): [number, number, number] | null {
@@ -179,8 +220,25 @@ function buildCalibrationModel(data: CalibrationPoint[]): CalibrationModel | nul
         return null;
     }
 
-    const xCoefficients = fitAffineCoefficients(data, "targetX");
-    const yCoefficients = fitAffineCoefficients(data, "targetY");
+    const baselinePoint = getBaselineCalibrationPoint(data);
+    const baselineEyeCenterY = baselinePoint.eyeCenterY;
+    const baselineEyeOpenness = baselinePoint.eyeOpenness;
+
+    const correctedData = data.map((point) => {
+        const correctedGaze = correctGazeWithEyeShape(
+            { x: point.gazeX, y: point.gazeY }, 
+            point.eyeCenterY,
+            point.eyeOpenness,
+            baselineEyeCenterY, 
+            baselineEyeOpenness
+        );
+
+        return {...point, gazeX: correctedGaze.x, gazeY: correctedGaze.y};
+    });
+
+
+    const xCoefficients = fitAffineCoefficients(correctedData, "targetX");
+    const yCoefficients = fitAffineCoefficients(correctedData, "targetY");
 
     if (!xCoefficients || !yCoefficients) {
         return null;
@@ -193,6 +251,8 @@ function buildCalibrationModel(data: CalibrationPoint[]): CalibrationModel | nul
         d: yCoefficients[0],
         e: yCoefficients[1],
         f: yCoefficients[2],
+        baselineEyeCenterY,
+        baselineEyeOpenness,
     };
 }
 
@@ -525,8 +585,46 @@ function Camera() {
                             y: (leftRelative.y + rightRelative.y) / 2,
                         };
 
+                        const leftOpenness = getEyeOpenness(
+                            leftEyeTop,
+                            leftEyeBottom,
+                            leftEyeLeftCorner,
+                            leftEyeRightCorner,
+                        )
+
+                        const rightOpenness = getEyeOpenness(
+                            rightEyeTop,
+                            rightEyeBottom,
+                            rightEyeLeftCorner,
+                            rightEyeRightCorner,
+                        )
+
+                        const leftEyeCenterY = getEyeCenterY(
+                            leftEyeLeftCorner,
+                            leftEyeRightCorner,
+                        )
+
+                        const rightEyeCenterY = getEyeCenterY(
+                            rightEyeLeftCorner,
+                            rightEyeRightCorner,
+                        )
+
+                        const eyeCenterY = (leftEyeCenterY + rightEyeCenterY) / 2;
+                        const eyeOpenness = (leftOpenness + rightOpenness) / 2;
+
+                        const isBlinking = leftOpenness < 0.2 || rightOpenness < 0.2;
+                        const model = calibrationModelRef.current;
+
+                        const gazeForMapping = model ? correctGazeWithEyeShape(
+                            raw,
+                            eyeCenterY,
+                            eyeOpenness,
+                            model.baselineEyeCenterY,
+                            model.baselineEyeOpenness,
+                        ) : raw;
+
                         const q = smoothQueueRef.current;
-                        q.push(raw);
+                        q.push(gazeForMapping);
 
                         if (q.length > SMOOTH_N) {
                             q.shift();
@@ -538,16 +636,13 @@ function Camera() {
                             x: smoothed.x,
                             y: smoothed.y,
                             hasFace: true,
+                            eyeCenterY,
+                            eyeOpenness,
                         };
 
-                        const leftOpenness = getEyeOpenness(leftEyeTop, leftEyeBottom, leftEyeLeftCorner, leftEyeRightCorner);
-                        const rightOpenness = getEyeOpenness(rightEyeTop, rightEyeBottom, rightEyeLeftCorner, rightEyeRightCorner);
-
-                        const isBlinking = leftOpenness < 0.2 || rightOpenness < 0.2;
-
-                        if (!caliButton && calibrationModelRef.current) {
+                        if (!caliButton && model) {
                             if (!isBlinking) {
-                                const mapped = mapGazeRelative(smoothed, calibrationModelRef.current);
+                                const mapped = mapGazeRelative(smoothed, model);
                                 lastGoodMappedRef.current = mapped;
                             }
 
@@ -556,7 +651,6 @@ function Camera() {
                             }
                         }
 
-
                         //console.log("didnt work");
                         //console.log(dotCalibrationData);
                     } else {
@@ -564,6 +658,8 @@ function Camera() {
                             x: 0.5,
                             y: 0.5,
                             hasFace: false,
+                            eyeCenterY: 0.5,
+                            eyeOpenness: 0,
                         }
                     }
                 }
