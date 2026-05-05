@@ -9,6 +9,8 @@ import "./Camera.css"
 // ******** NEXT FIX **********
 // 1. tune the constants on line 126
 // 2. add feature that allows to add more than 9 calibration points
+// 3. I think the dot is still wobbly when you stare at some dot because the eyelids 
+//      move by themselves even when resting
 
 type Point = {
     x: number;
@@ -125,15 +127,16 @@ function getBaselineCalibrationPoint(data: CalibrationPoint[]): CalibrationPoint
 
 function correctGazeWithEyeShape(gaze: Point, eyeCenterY: number, eyeOpenness: number, baselineEyeCenterY: number, baselineEyeOpenness: number): Point {
     // change these constants
-    const EYE_CENTER_WEIGHT = 0.7;
-    const EYE_OPENNESS_WEIGHT = 0.1;
+    const EYE_CENTER_WEIGHT = 0.8;
+    //const EYE_OPENNESS_WEIGHT = 0.1;
 
     const eyeCenterChange = eyeCenterY - baselineEyeCenterY;
     const eyeOpennessChange = eyeOpenness - baselineEyeOpenness;
 
     return {
         x: gaze.x,
-        y: gaze.y - EYE_CENTER_WEIGHT * eyeCenterChange - EYE_OPENNESS_WEIGHT * eyeOpennessChange,
+        y: gaze.y - EYE_CENTER_WEIGHT * eyeCenterChange,
+        // removed  - EYE_OPENNESS_WEIGHT * eyeOpennessChange
     };
 }
 
