@@ -7,10 +7,11 @@ import "./Camera.css"
 
 
 // ******** NEXT FIX **********
-// 1. tune the constants on line 126
-// 2. add feature that allows to add more than 9 calibration points
-// 3. I think the dot is still wobbly when you stare at some dot because the eyelids 
-//      move by themselves even when resting
+// 1. I think the dot is still wobbly when you stare at some dot because the eyelids 
+//      move by themselves even when resting.
+//   -> fix the wobbly problem
+// 2. fix the issue that makes the gaze dot not reach the corners
+// 3. fix the issue of head position moving
 
 type Point = {
     x: number;
@@ -125,19 +126,15 @@ function getBaselineCalibrationPoint(data: CalibrationPoint[]): CalibrationPoint
     return closest;
 }
 
-function correctGazeWithEyeShape(gaze: Point, eyeCenterY: number, eyeOpenness: number, baselineEyeCenterY: number, baselineEyeOpenness: number): Point {
-    // change these constants
-    const EYE_CENTER_WEIGHT = 0.8;
-    //const EYE_OPENNESS_WEIGHT = 0.1;
-
-    const eyeCenterChange = eyeCenterY - baselineEyeCenterY;
-    const eyeOpennessChange = eyeOpenness - baselineEyeOpenness;
-
-    return {
-        x: gaze.x,
-        y: gaze.y - EYE_CENTER_WEIGHT * eyeCenterChange,
-        // removed  - EYE_OPENNESS_WEIGHT * eyeOpennessChange
-    };
+function correctGazeWithEyeShape(gaze: Point, _eyeCenterY: number, _eyeOpenness: number, _baselineEyeCenterY: number, _baselineEyeOpenness: number): Point {
+    // The corner-anchored Y normalization in getRelativeIrisPosition
+    // already cancels eyelid drift and head-pitch offset:
+    //   relativeY = (iris.y - cornerCenterY) / eyeWidth
+    // Both terms shift equally on head pitch, so the difference is invariant.
+    // Adding an eyeCenterY correction here would apply raw landmark-coordinate
+    // deltas (~0.001–0.05) onto eye-width-normalized gaze values (±0.15 range),
+    // which is a unit mismatch that over-corrects. Pass through unchanged.
+    return { x: gaze.x, y: gaze.y };
 }
 
 function solve3x3(matrix: number[][], values: number[]): [number, number, number] | null {
@@ -269,28 +266,22 @@ function mapGazeRelative(gaze: Point, model: CalibrationModel): Point {
     };
 }
 
-function getRelativeIrisPosition(irisCenter: Point, eyeLeftCorner: Point, eyeRightCorner: Point, eyeTop: Point, eyeBottom: Point): Point | null {
+function getRelativeIrisPosition(irisCenter: Point, eyeLeftCorner: Point, eyeRightCorner: Point, _eyeTop: Point, _eyeBottom: Point): Point | null {
     const eyeWidth = eyeLeftCorner.x - eyeRightCorner.x;
-    const eyeHeight = eyeBottom.y - eyeTop.y;
 
-
-    // removed  (|| Math.abs(eyeHeight) < 0.000001) in the following conditional
     if (Math.abs(eyeWidth) < 0.000001) {
         return null;
     }
 
-    const cornerCenterY = (eyeLeftCorner.y + eyeRightCorner.y) / 2;
-
     const relativeX = (irisCenter.x - eyeRightCorner.x) / eyeWidth;
-    const relativeY = (irisCenter.y - eyeTop.y) / eyeHeight;
 
-    //console.log("irisCenter.x", irisCenter.x, "irisCenter.y", irisCenter.y);
-
-    //console.log("eyeLeftcorner.x", eyeLeftCorner.x, "eyebottom.y", eyeBottom.y);
-    //console.log("eyeRightcorner.x", eyeRightCorner.x, "eyetop.y", eyeTop.y);
-    //console.log("eyewidth", eyeWidth, "eyeheight", eyeHeight);
-
-    //console.log("relativeX", relativeX, "relativeY", relativeY);
+    // Anchor Y to the eye-corner midpoint instead of the upper eyelid.
+    // Eye corners sit on the orbital bone and don't move with blinks or
+    // eyebrow raises, so this removes eyelid-induced vertical drift.
+    // Normalise by eyeWidth (stable) rather than eyeHeight (varies with lids).
+    // Raw output is roughly ±0.15; +0.5 shifts it into the [0, 1] range.
+    const cornerCenterY = (eyeLeftCorner.y + eyeRightCorner.y) / 2;
+    const relativeY = (irisCenter.y - cornerCenterY) / eyeWidth + 0.5;
 
     return {
         x: clamp(relativeX, 0, 1),

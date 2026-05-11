@@ -87,7 +87,7 @@ function Calibration({ gaze }: Props) {
 
         if (isLastDot) {
             console.log("Calibration complete");
-            setDotCalibrationData(updatedData);
+            setDotCalibrationData((prev) => [...prev, ...updatedData]);
             setCaliButton(false);
             return;
         }
