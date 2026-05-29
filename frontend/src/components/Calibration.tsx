@@ -19,17 +19,23 @@ type CalibrationPoint = {
     eyeOpenness: number;
 };
 
+const M = 20; // margin in px from each edge
+const W = window.innerWidth;
+const H = window.innerHeight;
+const mx = M / W; // normalized x margin
+const my = M / H; // normalized y margin
+
 const DOT_POSITIONS = [
-    { x: 0, y: 0 },
-    { x: 0.5, y: 0 },
-    { x: 1, y: 0 },
-    { x: 0, y: 0.5 },
-    { x: 0.5, y: 0.5 },
-    { x: 1, y: 0.5 },
-    { x: 0, y: 1 },
-    { x: 0.5, y: 1 },
-    { x: 1, y: 1 },
-] as const;
+    { x: mx,      y: my      },
+    { x: 0.5,     y: my      },
+    { x: 1 - mx,  y: my      },
+    { x: mx,      y: 0.5     },
+    { x: 0.5,     y: 0.5     },
+    { x: 1 - mx,  y: 0.5     },
+    { x: mx,      y: 1 - my  },
+    { x: 0.5,     y: 1 - my  },
+    { x: 1 - mx,  y: 1 - my  },
+];
 
 type Props = {
     gaze: React.RefObject<Gaze | null>;

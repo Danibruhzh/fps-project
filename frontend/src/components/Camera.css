@@ -48,3 +48,17 @@
 .calibrateHide{
     display:none;
 }
+
+.clearShow{
+    right: 0;
+    top: 21px;
+    position: fixed;
+    border-radius: 1px;
+    border: solid;
+    background-color: lightcoral;
+    cursor: pointer;
+}
+
+.clearHide{
+    display:none;
+}

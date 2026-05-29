@@ -35,12 +35,8 @@ type CalibrationPoint = {
 };
 
 type CalibrationModel = {
-    a: number;
-    b: number;
-    c: number;
-    d: number;
-    e: number;
-    f: number;
+    xCoeffs: number[]; // [a,b,c,d,e,f] for: a·gx² + b·gy² + c·gx·gy + d·gx + e·gy + f
+    yCoeffs: number[];
     baselineEyeCenterY: number;
     baselineEyeOpenness: number;
 };
@@ -137,82 +133,61 @@ function correctGazeWithEyeShape(gaze: Point, _eyeCenterY: number, _eyeOpenness:
     return { x: gaze.x, y: gaze.y };
 }
 
-function solve3x3(matrix: number[][], values: number[]): [number, number, number] | null {
+// General N×N Gaussian elimination with partial pivoting.
+function solveLinearSystem(matrix: number[][], values: number[]): number[] | null {
+    const n = matrix.length;
     const a = matrix.map((row, i) => [...row, values[i]]);
 
-    for (let col = 0; col < 3; col++) {
+    for (let col = 0; col < n; col++) {
         let bestRow = col;
-
-        for (let row = col + 1; row < 3; row++) {
-            if (Math.abs(a[row][col]) > Math.abs(a[bestRow][col])) {
-                bestRow = row;
-            }
+        for (let row = col + 1; row < n; row++) {
+            if (Math.abs(a[row][col]) > Math.abs(a[bestRow][col])) bestRow = row;
         }
 
-        if (Math.abs(a[bestRow][col]) < 0.000001) {
-            return null;
-        }
+        if (Math.abs(a[bestRow][col]) < 0.000001) return null;
 
         [a[col], a[bestRow]] = [a[bestRow], a[col]];
 
         const pivot = a[col][col];
+        for (let j = col; j <= n; j++) a[col][j] /= pivot;
 
-        for (let j = col; j < 4; j++) {
-            a[col][j] /= pivot;
-        }
-
-        for (let row = 0; row < 3; row++) {
+        for (let row = 0; row < n; row++) {
             if (row === col) continue;
-
             const factor = a[row][col];
-
-            for (let j = col; j < 4; j++) {
-                a[row][j] -= factor * a[col][j];
-            }
+            for (let j = col; j <= n; j++) a[row][j] -= factor * a[col][j];
         }
     }
 
-    return [a[0][3], a[1][3], a[2][3]];
+    return a.map(row => row[n]);
 }
 
-function fitAffineCoefficients(data: CalibrationPoint[], targetKey: "targetX" | "targetY"): [number, number, number] | null {
-    let sumGXGX = 0;
-    let sumGXGY = 0;
-    let sumGX = 0;
-    let sumGYGY = 0;
-    let sumGY = 0;
-    let sumOne = data.length;
+// Fits: target = a·gx² + b·gy² + c·gx·gy + d·gx + e·gy + f
+// Uses least-squares normal equations (AᵀA·x = Aᵀb) with a small ridge
+// penalty (1e-3 on the diagonal) to keep the quadratic terms stable when
+// calibration data is sparse. Ridge shrinks coefficients toward the affine
+// solution rather than fitting noise with curvature.
+function fitPolynomialCoefficients(data: CalibrationPoint[], targetKey: "targetX" | "targetY"): number[] | null {
+    const N = 6;
+    const RIDGE = 1e-3;
 
-    let sumGXT = 0;
-    let sumGYT = 0;
-    let sumT = 0;
+    const ATA: number[][] = Array.from({ length: N }, () => Array(N).fill(0));
+    const ATb: number[] = Array(N).fill(0);
 
     for (const point of data) {
         const gx = point.gazeX;
         const gy = point.gazeY;
-        const target = point[targetKey];
+        const t = point[targetKey];
+        const phi = [gx * gx, gy * gy, gx * gy, gx, gy, 1];
 
-        sumGXGX += gx * gx;
-        sumGXGY += gx * gy;
-        sumGX += gx;
-
-        sumGYGY += gy * gy;
-        sumGY += gy;
-
-        sumGXT += gx * target;
-        sumGYT += gy * target;
-        sumT += target;
+        for (let i = 0; i < N; i++) {
+            ATb[i] += phi[i] * t;
+            for (let j = 0; j < N; j++) ATA[i][j] += phi[i] * phi[j];
+        }
     }
 
-    const matrix = [
-        [sumGXGX, sumGXGY, sumGX],
-        [sumGXGY, sumGYGY, sumGY],
-        [sumGX, sumGY, sumOne],
-    ];
+    for (let i = 0; i < N; i++) ATA[i][i] += RIDGE;
 
-    const values = [sumGXT, sumGYT, sumT];
-
-    return solve3x3(matrix, values);
+    return solveLinearSystem(ATA, ATb);
 }
 
 function buildCalibrationModel(data: CalibrationPoint[]): CalibrationModel | null {
@@ -237,28 +212,26 @@ function buildCalibrationModel(data: CalibrationPoint[]): CalibrationModel | nul
     });
 
 
-    const xCoefficients = fitAffineCoefficients(correctedData, "targetX");
-    const yCoefficients = fitAffineCoefficients(correctedData, "targetY");
+    const xCoeffs = fitPolynomialCoefficients(correctedData, "targetX");
+    const yCoeffs = fitPolynomialCoefficients(correctedData, "targetY");
 
-    if (!xCoefficients || !yCoefficients) {
+    if (!xCoeffs || !yCoeffs) {
+        console.warn("buildCalibrationModel: polynomial solve failed — matrix is singular");
         return null;
     }
 
-    return {
-        a: xCoefficients[0],
-        b: xCoefficients[1],
-        c: xCoefficients[2],
-        d: yCoefficients[0],
-        e: yCoefficients[1],
-        f: yCoefficients[2],
-        baselineEyeCenterY,
-        baselineEyeOpenness,
-    };
+    console.log("calibration model built", { xCoeffs, yCoeffs, n: data.length });
+    return { xCoeffs, yCoeffs, baselineEyeCenterY, baselineEyeOpenness };
 }
 
 function mapGazeRelative(gaze: Point, model: CalibrationModel): Point {
-    const mappedX = model.a * gaze.x + model.b * gaze.y + model.c;
-    const mappedY = model.d * gaze.x + model.e * gaze.y + model.f;
+    const gx = gaze.x;
+    const gy = gaze.y;
+    const [a, b, c, d, e, f] = model.xCoeffs;
+    const [p, q, r, s, t, u] = model.yCoeffs;
+
+    const mappedX = a*gx*gx + b*gy*gy + c*gx*gy + d*gx + e*gy + f;
+    const mappedY = p*gx*gx + q*gy*gy + r*gx*gy + s*gx + t*gy + u;
 
     return {
         x: 1 - clamp(mappedX, 0, 1),
@@ -335,7 +308,7 @@ function getRelativeIrisPosition(irisCenter: Point, eyeLeftCorner: Point, eyeRig
 
 function Camera() {
     const calibrationContext = useCalibrationContext();
-    const { caliButton, setCaliButton, dotCalibrationData } = calibrationContext!;
+    const { caliButton, setCaliButton, dotCalibrationData, setDotCalibrationData } = calibrationContext!;
 
     const webcamRef = useRef<Webcam>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -363,7 +336,7 @@ function Camera() {
     const lastGoodMappedRef = useRef<Point | null>(null);
 
     useEffect(() => {
-        //console.log("context dotCalibrationData:", dotCalibrationData);
+        console.log("context dotCalibrationData:", dotCalibrationData);
         calibrationModelRef.current = buildCalibrationModel(dotCalibrationData);
     }, [dotCalibrationData]);
 
@@ -406,6 +379,12 @@ function Camera() {
             facelandmarkerRef.current = null;
         }
     }, []);
+
+    const clearCalibration = () => {
+        setDotCalibrationData([]);
+        lastGoodMappedRef.current = null;
+        canvasRef.current?.getContext("2d")?.clearRect(0, 0, windowWidth, windowHeight);
+    }
 
     const startPredictLoop = () => {
         if (rafIdRef.current) return;
@@ -808,6 +787,15 @@ function Camera() {
                 }}
             >
                 Calibrate
+            </div>
+
+            <div
+                className={!caliButton ? "clearShow" : "clearHide"}
+                onClick={() => {
+                    clearCalibration();
+                }}
+            >
+                Clear
             </div>
         </div>
     );
