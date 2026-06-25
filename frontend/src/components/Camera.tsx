@@ -47,8 +47,8 @@ const windowWidth = 1535;
 const windowHeight = 728;
 
 
-const LEFT_IRIS = [473, 474, 475, 476, 477];
-const RIGHT_IRIS = [468, 469, 470, 471, 472];
+const LEFT_IRIS_CENTER = 473;
+const RIGHT_IRIS_CENTER = 468;
 const RIGHT_EYE_RIGHT_CORNER = 33;
 const RIGHT_EYE_LEFT_CORNER = 133;
 const RIGHT_EYE_TOP = 159;
@@ -467,22 +467,14 @@ function Camera() {
                         { color: "red", lineWidth: 1 }
                     );
 
-                    const leftPoints: Point[] = LEFT_IRIS.map((i) => ({
-                        x: landmarks[i].x,
-                        y: landmarks[i].y,
-                    }));
-
-                    //console.log(leftPoints);
-
-                    const rightPoints: Point[] = RIGHT_IRIS.map((i) => ({
-                        x: landmarks[i].x,
-                        y: landmarks[i].y,
-                    }));
-
-                    //console.log(rightPoints);
-
-                    const leftCenter = avg(leftPoints);
-                    const rightCenter = avg(rightPoints);
+                    const leftCenter: Point = {
+                        x: landmarks[LEFT_IRIS_CENTER].x,
+                        y: landmarks[LEFT_IRIS_CENTER].y,
+                    };
+                    const rightCenter: Point = {
+                        x: landmarks[RIGHT_IRIS_CENTER].x,
+                        y: landmarks[RIGHT_IRIS_CENTER].y,
+                    };
 
                     const leftEyeLeftCorner: Point = {
                         x: landmarks[LEFT_EYE_LEFT_CORNER].x,

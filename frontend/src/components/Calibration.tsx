@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useCalibrationContext } from "../context/context";
 import "./Calibration.css";
 
@@ -37,72 +37,96 @@ const DOT_POSITIONS = [
     { x: 1 - mx,  y: 1 - my  },
 ];
 
+const COLLECT_MS = 200;
+const SAMPLE_INTERVAL_MS = 33;
+
 type Props = {
     gaze: React.RefObject<Gaze | null>;
 };
 
 function Calibration({ gaze }: Props) {
     const calibrationContext = useCalibrationContext();
-    const { setCaliButton, setDotCalibrationData, dotCalibrationData } = calibrationContext!;
+    const { setCaliButton, setDotCalibrationData } = calibrationContext!;
 
-    const [currentDot, setCurrentDot] = useState<number>(0);
+    const [currentDot, setCurrentDot] = useState(0);
     const [calibrationData, setCalibrationData] = useState<CalibrationPoint[]>([]);
-    const [errorMessage, setErrorMessage] = useState<string>("");
+    const [errorMessage, setErrorMessage] = useState("");
+    const [isCollecting, setIsCollecting] = useState(false);
+    const samplesRef = useRef<{ x: number; y: number; eyeCenterY: number; eyeOpenness: number }[]>([]);
 
     const dot = DOT_POSITIONS[currentDot];
     const isLastDot = currentDot === DOT_POSITIONS.length - 1;
 
-    function buildCalibrationPoint(): CalibrationPoint | null {
-        const currentGaze = gaze.current;
+    function handleConfirm() {
+        if (isCollecting) return;
 
+        const currentGaze = gaze.current;
         if (!currentGaze) {
             setErrorMessage("No gaze data available yet.");
-            return null;
+            return;
         }
-
         if (!currentGaze.hasFace) {
             setErrorMessage("Face not detected. Look at the camera and try again.");
-            return null;
-        }
-
-        setErrorMessage("");
-
-        return {
-            targetX: dot.x,
-            targetY: dot.y,
-            gazeX: currentGaze.x,
-            gazeY: currentGaze.y,
-            eyeCenterY: currentGaze.eyeCenterY,
-            eyeOpenness: currentGaze.eyeOpenness,
-        };
-    }
-
-
-    function handleConfirm() {
-        console.log("click!");
-        const point = buildCalibrationPoint();
-
-        if (!point) return;
-        const updatedData = [...calibrationData, point];
-        console.log("updatedData");
-        console.log(updatedData);
-
-
-        setCalibrationData(updatedData); // technically we dont really need calibrationData
-        // but it is a buffer
-
-        if (isLastDot) {
-            console.log("Calibration complete");
-            setDotCalibrationData((prev) => [...prev, ...updatedData]);
-            setCaliButton(false);
             return;
         }
 
-        setCurrentDot((prevDot) => prevDot + 1);
-
-        console.log("calibrationData");
-        console.log(calibrationData);
+        setErrorMessage("");
+        setIsCollecting(true);
     }
+
+    useEffect(() => {
+        if (!isCollecting) return;
+
+        samplesRef.current = [];
+
+        const intervalId = setInterval(() => {
+            const g = gaze.current;
+            if (g && g.hasFace) {
+                samplesRef.current.push({
+                    x: g.x, y: g.y,
+                    eyeCenterY: g.eyeCenterY, eyeOpenness: g.eyeOpenness,
+                });
+            }
+        }, SAMPLE_INTERVAL_MS);
+
+        const timeoutId = setTimeout(() => {
+            clearInterval(intervalId);
+            setIsCollecting(false);
+
+            const samples = samplesRef.current;
+            if (samples.length === 0) {
+                setErrorMessage("No valid samples collected. Try again.");
+                return;
+            }
+
+            const n = samples.length;
+            const point: CalibrationPoint = {
+                targetX: dot.x,
+                targetY: dot.y,
+                gazeX: samples.reduce((s, p) => s + p.x, 0) / n,
+                gazeY: samples.reduce((s, p) => s + p.y, 0) / n,
+                eyeCenterY: samples.reduce((s, p) => s + p.eyeCenterY, 0) / n,
+                eyeOpenness: samples.reduce((s, p) => s + p.eyeOpenness, 0) / n,
+            };
+
+            console.log(`Dot ${currentDot}: averaged ${n} samples`);
+
+            const updated = [...calibrationData, point];
+            setCalibrationData(updated);
+
+            if (isLastDot) {
+                setDotCalibrationData((prev) => [...prev, ...updated]);
+                setCaliButton(false);
+            } else {
+                setCurrentDot((d) => d + 1);
+            }
+        }, COLLECT_MS);
+
+        return () => {
+            clearInterval(intervalId);
+            clearTimeout(timeoutId);
+        };
+    }, [isCollecting]);
 
     return (
         <div className="calibration-overlay">
@@ -112,8 +136,8 @@ function Calibration({ gaze }: Props) {
             />
 
             <div className="calibration-controls">
-                <button className="calibration-btn" onClick={handleConfirm}>
-                    {isLastDot ? "Finish" : "Confirm"}
+                <button className="calibration-btn" onClick={handleConfirm} disabled={isCollecting}>
+                    {isCollecting ? "Collecting..." : isLastDot ? "Finish" : "Confirm"}
                 </button>
 
                 {errorMessage && <p className="calibration-error">{errorMessage}</p>}
